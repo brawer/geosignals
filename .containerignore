@@ -9,3 +9,4 @@ tests
 tools
 *.tif
 *.osm.pbf
+scripts

@@ -1,0 +1,238 @@
+# SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+# SPDX-License-Identifier: MIT
+
+name: Release build
+
+# Builds the container image natively on amd64 and arm64, publishes it to
+# ghcr.io as one multi-architecture image, and attests it:
+#
+#   * SLSA build provenance for both images and the multi-arch index;
+#   * a CycloneDX 1.7 SBOM for each image (see scripts/sbom.sh).
+#
+# This is a reusable workflow, called only by release.yml. The split is
+# what lifts the provenance to SLSA Build Level 3: the signing identity is
+# this file at a pinned ref, so the build instructions are isolated from
+# the calling workflow, and verifiers can require that exact signer:
+#
+#   gh attestation verify oci://ghcr.io/brawer/osmsignals:v0.1.0 \
+#     --owner brawer \
+#     --signer-workflow brawer/osmsignals/.github/workflows/release-build.yml
+#
+# https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating
+# https://slsa.dev/spec/v1.2/build-track-basics#build-l3
+on:
+  workflow_call:
+
+permissions: {}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  verify-version:
+    name: Check tag against Cargo.toml
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Compare tag to package version
+      env:
+        TAG: ${{ github.ref_name }}
+      run: |
+        VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+        if [ "$TAG" != "v$VERSION" ]; then
+          echo "::error::Tag $TAG does not match version $VERSION in Cargo.toml"
+          exit 1
+        fi
+
+  build:
+    name: Build ${{ matrix.arch }} image
+    needs: [verify-version]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+        - { arch: amd64, runner: ubuntu-24.04 }
+        - { arch: arm64, runner: ubuntu-24.04-arm }
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Install podman and jq
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q podman jq
+    - name: Build image
+      env:
+        TAG: ${{ github.ref_name }}
+        SHA: ${{ github.sha }}
+      run: |
+        # The commit time stands in for "now", so rebuilding the same
+        # commit gives the same image.
+        EPOCH="$(git log -1 --format=%ct "$SHA")"
+        CREATED="$(date -u -d "@$EPOCH" +%Y-%m-%dT%H:%M:%SZ)"
+        podman build \
+          --platform "linux/${{ matrix.arch }}" \
+          --timestamp "$EPOCH" \
+          --label "org.opencontainers.image.created=$CREATED" \
+          --label "org.opencontainers.image.revision=$SHA" \
+          --label "org.opencontainers.image.version=${TAG#v}" \
+          --tag osmsignals .
+    - name: Smoke-test image
+      run: |
+        mkdir -p "$RUNNER_TEMP/data"
+        cp tests/data/zugerland.osm.pbf "$RUNNER_TEMP/data/"
+        podman run --rm --network=none \
+          --userns=keep-id --user "$(id -u):$(id -g)" \
+          --volume "$RUNNER_TEMP/data:/data" \
+          osmsignals node-density \
+          --input zugerland.osm.pbf --output node-density.tif
+        test -s "$RUNNER_TEMP/data/node-density.tif"
+    - name: Push image
+      env:
+        TAG: ${{ github.ref_name }}
+        TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        ACTOR: ${{ github.actor }}
+      run: |
+        echo "$TOKEN" | podman login ghcr.io --username "$ACTOR" --password-stdin
+        mkdir -p out
+        podman push --digestfile out/digest.txt \
+          osmsignals "docker://$IMAGE:$TAG-${{ matrix.arch }}"
+        echo "pushed $IMAGE@$(cat out/digest.txt)"
+    - name: Generate SBOM
+      run: |
+        scripts/install-syft.sh "$RUNNER_TEMP/bin"
+        podman save --format oci-archive --output "$RUNNER_TEMP/image.tar" osmsignals
+        PATH="$RUNNER_TEMP/bin:$PATH" scripts/sbom.sh \
+          "$RUNNER_TEMP/image.tar" "$IMAGE" "$(cat out/digest.txt)" out/sbom.cdx.json
+    - name: Upload digest and SBOM
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      with:
+        name: image-${{ matrix.arch }}
+        path: out
+        retention-days: 90
+
+  manifest:
+    name: Publish multi-architecture image
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+    - name: Download digests
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+    - name: Create and push image index
+      env:
+        TAG: ${{ github.ref_name }}
+        TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        ACTOR: ${{ github.actor }}
+      run: |
+        echo "$TOKEN" | podman login ghcr.io --username "$ACTOR" --password-stdin
+        podman manifest create osmsignals
+        for arch in amd64 arm64; do
+          podman manifest add osmsignals "docker://$IMAGE@$(cat "image-$arch/digest.txt")"
+        done
+        mkdir -p image-index
+        podman manifest push --digestfile image-index/digest.txt \
+          osmsignals "docker://$IMAGE:$TAG"
+        podman manifest push osmsignals "docker://$IMAGE:latest"
+        echo "pushed $IMAGE@$(cat image-index/digest.txt)"
+    - name: Upload index digest
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      with:
+        name: image-index
+        path: image-index
+        retention-days: 90
+
+  attest:
+    name: Attest provenance and SBOMs
+    needs: [manifest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+    - name: Download digests and SBOMs
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+    - name: Read digests
+      id: digests
+      run: |
+        {
+          echo "amd64=$(cat image-amd64/digest.txt)"
+          echo "arm64=$(cat image-arm64/digest.txt)"
+          echo "index=$(cat image-index/digest.txt)"
+        } >> "$GITHUB_OUTPUT"
+    - name: Log in to registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Attest provenance of amd64 image
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+      with:
+        subject-name: ${{ env.IMAGE }}
+        subject-digest: ${{ steps.digests.outputs.amd64 }}
+        push-to-registry: true
+    - name: Attest provenance of arm64 image
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+      with:
+        subject-name: ${{ env.IMAGE }}
+        subject-digest: ${{ steps.digests.outputs.arm64 }}
+        push-to-registry: true
+    - name: Attest provenance of image index
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+      with:
+        subject-name: ${{ env.IMAGE }}
+        subject-digest: ${{ steps.digests.outputs.index }}
+        push-to-registry: true
+    - name: Attest SBOM of amd64 image
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+      with:
+        subject-name: ${{ env.IMAGE }}
+        subject-digest: ${{ steps.digests.outputs.amd64 }}
+        sbom-path: image-amd64/sbom.cdx.json
+        push-to-registry: true
+    - name: Attest SBOM of arm64 image
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+      with:
+        subject-name: ${{ env.IMAGE }}
+        subject-digest: ${{ steps.digests.outputs.arm64 }}
+        sbom-path: image-arm64/sbom.cdx.json
+        push-to-registry: true
+
+    # Check the attestations the way a user would, so that a release with
+    # unverifiable attestations fails loudly instead of shipping.
+    - name: Verify attestations
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+        SIGNER: ${{ github.repository }}/.github/workflows/release-build.yml
+      run: |
+        for subject in "$IMAGE:$TAG" \
+            "$IMAGE@${{ steps.digests.outputs.amd64 }}" \
+            "$IMAGE@${{ steps.digests.outputs.arm64 }}"; do
+          gh attestation verify "oci://$subject" \
+            --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER"
+        done
+        for arch in amd64 arm64; do
+          gh attestation verify "oci://$IMAGE@$(cat "image-$arch/digest.txt")" \
+            --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER" \
+            --predicate-type https://cyclonedx.org/bom
+        done

@@ -9,17 +9,24 @@
 #       -v "$PWD:/data" osmsignals \
 #       node-density --input planet.osm.pbf --output node-density.tif
 #
-# The build is meant to be reproducible, so that a later SLSA release
-# workflow can rebuild and attest it: the base image is pinned by digest
-# (Dependabot keeps it current), Cargo.lock is enforced with --locked,
-# nothing is downloaded from a package manager other than crates.io,
-# and build paths are stripped from the binary.
+# Releases are built and attested by .github/workflows/release-build.yml.
+# The build is meant to be reproducible, so that anyone can rebuild a
+# release and compare it with the attested image: the base image is
+# pinned by digest (Dependabot keeps it current), Cargo.lock is enforced
+# with --locked, nothing is downloaded from a package manager other than
+# crates.io, and build paths are stripped from the binary.
 
 # Alpine's Rust is native musl, which links statically by default; the
 # image already ships gcc and musl-dev for the C parts of zstd. Building
 # natively for the target platform keeps multi-arch builds
 # (podman build --platform linux/amd64,linux/arm64) free of cross-compilers.
 FROM docker.io/library/rust:1.99-alpine@sha256:557a94c82b485a14b569120e00867267108c734efe33f10cc31ca0cd5dd1eca9 AS build
+
+# cargo-auditable embeds the exact dependency list into the binary, so
+# SBOM generators (syft) and vulnerability scanners (Trivy, Grype) can
+# read what is inside the image without access to the source tree.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo install --locked cargo-auditable@0.7.7
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
@@ -32,7 +39,7 @@ ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
     RUSTFLAGS="--remap-path-prefix=/src=. --remap-path-prefix=/usr/local/cargo=cargo"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked --bin osmsignals \
+    cargo auditable build --release --locked --bin osmsignals \
  && cp target/release/osmsignals /osmsignals
 
 # Fail the build unless the binary is static (static-pie is fine:

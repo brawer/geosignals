@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+# SPDX-License-Identifier: MIT
+
+name: Release
+
+# release-please tags each release (v0.1.0, ...), and that tag starts this
+# workflow. The work is done by release-build.yml, a reusable workflow: see
+# its header for why that split matters for SLSA Build Level 3.
+on:
+  push:
+    tags: [ "v*" ]
+
+# One release at a time, so that two tags pushed close together cannot race
+# for the mutable :latest tag. Never cancel a running release halfway
+# through pushing or attesting.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release:
+    name: Build, publish and attest container image
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/release-build.yml

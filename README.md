@@ -38,6 +38,24 @@ podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$PWD:/data" \
   osmsignals node-density --input planet.osm.pbf --output node-density.tif
 ```
 
+Each release is also published as `ghcr.io/brawer/osmsignals` for
+amd64 and arm64, with SLSA Build Level 3 provenance and a CycloneDX 1.7
+SBOM per architecture attached as attestations. The single-architecture
+images are tagged too, such as `v0.1.0-amd64`. To check that an image
+was built by this repository's release workflow, and to read its SBOM:
+
+```sh
+gh attestation verify oci://ghcr.io/brawer/osmsignals:v0.1.0 --owner brawer \
+  --signer-workflow brawer/osmsignals/.github/workflows/release-build.yml
+gh attestation verify oci://ghcr.io/brawer/osmsignals:v0.1.0-amd64 --owner brawer \
+  --predicate-type https://cyclonedx.org/bom --format json \
+  | jq '.[0].verificationResult.statement.predicate'
+```
+
+The binary is built with [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable),
+so scanners such as Trivy or Grype can also read its dependencies
+straight from the image.
+
 ## Output
 
 A Cloud-Optimized GeoTIFF (BigTIFF) in Web Mercator (EPSG:3857) with
