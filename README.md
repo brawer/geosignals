@@ -5,6 +5,9 @@ SPDX-License-Identifier: MIT
 
 # OSM Signals
 
+[![Tests](https://github.com/brawer/osmsignals/actions/workflows/test.yml/badge.svg)](https://github.com/brawer/osmsignals/actions/workflows/test.yml)
+[![REUSE status](https://api.reuse.software/badge/github.com/brawer/osmsignals)](https://api.reuse.software/info/github.com/brawer/osmsignals)
+
 Ranking signals for [OpenStreetMap](https://www.openstreetmap.org/),
 computed from the planet file and published as
 [PMTiles](https://docs.protomaps.com/pmtiles/) raster pyramids.
@@ -50,6 +53,13 @@ are comparable.
 `cargo test` runs unit tests and an end-to-end test on a small extract
 around Zug. CI also runs a smoke test on Liechtenstein from Geofabrik;
 locally, point `OSMSIGNALS_SMOKE_PBF` at any extract to run it.
+
+## Contributing
+
+PR titles follow [Conventional Commits](https://www.conventionalcommits.org/)
+(`feat: …`, `fix: …`, `docs: …`), since PRs are squash-merged with
+the title as commit message. Every file carries SPDX headers; check
+with `reuse lint`.
 
 ## License
 
