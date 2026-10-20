@@ -11,3 +11,4 @@ pub mod node_density;
 pub mod pbf;
 pub mod pyramid;
 pub mod tile;
+pub mod workdir;

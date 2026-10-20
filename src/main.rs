@@ -22,9 +22,11 @@ enum Command {
         /// GeoTIFF file to write.
         #[arg(long)]
         output: PathBuf,
-        /// Directory for temporary files.
-        #[arg(long, default_value_os_t = std::env::temp_dir())]
-        tmpdir: PathBuf,
+        /// Working directory for temporary files, which can take several
+        /// times the size of the input. Each signal uses its own
+        /// subdirectory and cleans up leftovers of interrupted runs.
+        #[arg(long, alias = "tmpdir", default_value_os_t = std::env::temp_dir())]
+        workdir: PathBuf,
         /// Worker threads; defaults to the number of CPUs.
         #[arg(long)]
         threads: Option<usize>,
@@ -45,7 +47,7 @@ fn main() -> Result<()> {
         Command::NodeDensity {
             input,
             output,
-            tmpdir,
+            workdir,
             threads,
             run_size,
             sample_dir,
@@ -58,7 +60,7 @@ fn main() -> Result<()> {
             });
             let cfg = osmsignals::node_density::Config {
                 output,
-                tmpdir,
+                workdir,
                 threads,
                 run_size,
                 sample_dir,

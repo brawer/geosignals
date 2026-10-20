@@ -6,6 +6,7 @@
 use crate::cog::{Metadata, Spool};
 use crate::histogram::Histogram;
 use crate::tile::{MAX_TILE_ZOOM, TILE_SIZE};
+use crate::workdir::Workdir;
 use crate::{encode, extsort, pbf, pyramid};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
@@ -15,7 +16,8 @@ use std::time::Instant;
 
 pub struct Config {
     pub output: PathBuf,
-    pub tmpdir: PathBuf,
+    /// Directory for temporary files; see [`crate::workdir`].
+    pub workdir: PathBuf,
     pub threads: usize,
     pub run_size: usize,
     /// If set, raw counts of a sample of tiles are written here,
@@ -36,10 +38,11 @@ pub struct Summary {
 
 pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
     let start = Instant::now();
+    let workdir = Workdir::open(&cfg.workdir, "node-density")?;
     let opts = pbf::Options {
         threads: cfg.threads,
         run_size: cfg.run_size,
-        tmpdir: &cfg.tmpdir,
+        tmpdir: workdir.tmp(),
     };
     let (runs, stats) = pbf::sorted_runs(input, &opts)?;
     eprintln!(
@@ -50,7 +53,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         start.elapsed()
     );
 
-    let mut spool = Spool::new(&cfg.tmpdir)?;
+    let mut spool = Spool::new(workdir.tmp())?;
     let mut pixels = 0u64;
     let mut hist = Histogram::default();
     if let Some(dir) = &cfg.sample_dir {

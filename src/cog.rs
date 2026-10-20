@@ -50,8 +50,19 @@ pub struct Spool {
 
 impl Spool {
     pub fn new(tmpdir: &Path) -> Result<Self> {
+        // Named files rather than unlinked ones, so their disk usage is
+        // visible to whoever watches the working directory.
         let files = (0..=MAX_TILE_ZOOM)
-            .map(|_| Ok(BufWriter::new(tempfile::tempfile_in(tmpdir)?)))
+            .map(|z| {
+                let path = tmpdir.join(format!("spool-{z:02}"));
+                let f = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .with_context(|| format!("creating {}", path.display()))?;
+                Ok(BufWriter::new(f))
+            })
             .collect::<Result<_>>()?;
         let n = MAX_TILE_ZOOM as usize + 1;
         Ok(Spool {
@@ -95,7 +106,12 @@ impl Spool {
         let head = header(&levels, meta, data_end.next_multiple_of(8))?;
         ensure!(head.len() as u64 == len, "header size changed");
 
-        let out = File::create(path).with_context(|| format!("creating {}", path.display()))?;
+        // Write under a temporary name and rename at the end, so that a
+        // half-written file never shows up under the real name, even if
+        // we get killed.
+        let partial = partial_path(path);
+        let out =
+            File::create(&partial).with_context(|| format!("creating {}", partial.display()))?;
         let mut out = BufWriter::with_capacity(1 << 20, out);
         out.write_all(&head)?;
         let mut buf = Vec::new();
@@ -115,9 +131,20 @@ impl Spool {
                 out.write_all(&t.len.to_le_bytes())?;
             }
         }
-        out.flush()?;
-        Ok(())
+        let out = out.into_inner().map_err(|e| e.into_error())?;
+        out.sync_all()?;
+        drop(out);
+        std::fs::rename(&partial, path)
+            .with_context(|| format!("renaming {} to {}", partial.display(), path.display()))
     }
+}
+
+/// `planet.tif` → `planet.tif.partial`, in the same directory so that
+/// renaming is atomic.
+fn partial_path(path: &Path) -> std::path::PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".partial");
+    path.with_file_name(name)
 }
 
 #[derive(Clone, Copy, Default)]
