@@ -49,7 +49,7 @@ RUN ! readelf --program-headers /osmsignals | grep -q INTERP \
  && /osmsignals --version
 
 # scratch has no filesystem at all; give it a /tmp for the sort spill
-# files (the default --tmpdir) and a /data working directory to mount.
+# files (the default --workdir) and a /data directory to mount.
 RUN mkdir -p /rootfs/tmp /rootfs/data \
  && chmod 1777 /rootfs/tmp \
  && chmod 0777 /rootfs/data \

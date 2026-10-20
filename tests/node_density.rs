@@ -12,7 +12,7 @@ fn run(pbf: &Path, run_size: usize) -> (node_density::Summary, common::Image) {
     let dir = tempfile::tempdir().unwrap();
     let cfg = node_density::Config {
         output: dir.path().join("out.tif"),
-        tmpdir: dir.path().to_path_buf(),
+        workdir: dir.path().to_path_buf(),
         threads: 3,
         run_size,
         sample_dir: None,
@@ -119,6 +119,42 @@ fn run_size_does_not_change_output() {
     let (_, a) = run(Path::new(ZUGERLAND), 7);
     let (_, b) = run(Path::new(ZUGERLAND), 1 << 20);
     assert_eq!(a.tiles, b.tiles);
+}
+
+/// Kubernetes may restart a killed run with the same working directory.
+/// The new run must clean up after the old one and still succeed.
+#[test]
+fn restart_after_crash() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    let output = dir.path().join("out.tif");
+    // What a run killed halfway through leaves behind.
+    let stale = work.join("node-density/tmp");
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("spool-10"), vec![7u8; 1000]).unwrap();
+    std::fs::write(stale.join(".tmpAbC123"), b"half a run").unwrap();
+    std::fs::write(dir.path().join("out.tif.partial"), b"half a file").unwrap();
+    std::fs::write(work.join("planet.osm.pbf"), b"not ours").unwrap();
+
+    let cfg = node_density::Config {
+        output: output.clone(),
+        workdir: work.clone(),
+        threads: 2,
+        run_size: 100,
+        sample_dir: None,
+        sample_rate: 64,
+    };
+    let input = std::fs::File::open(ZUGERLAND).unwrap();
+    let summary = node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
+    assert_eq!(summary.nodes, 1790);
+    common::read(&std::fs::read(&output).unwrap());
+
+    assert!(!dir.path().join("out.tif.partial").exists());
+    assert!(!stale.exists(), "temporary files left behind");
+    assert_eq!(
+        std::fs::read(work.join("planet.osm.pbf")).unwrap(),
+        b"not ours"
+    );
 }
 
 /// Runs on a bigger extract given by `OSMSIGNALS_SMOKE_PBF`, such as
