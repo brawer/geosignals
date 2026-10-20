@@ -49,7 +49,7 @@ jobs:
           --userns=keep-id --user "$(id -u):$(id -g)" \
           --volume "$RUNNER_TEMP/data:/data" \
           osmsignals node-density \
-          --input zugerland.osm.pbf --output node-density.pmtiles
-        test -s "$RUNNER_TEMP/data/node-density.pmtiles"
+          --input zugerland.osm.pbf --output node-density.tif
+        test -s "$RUNNER_TEMP/data/node-density.tif"
     - name: Show image size
       run: podman image ls osmsignals

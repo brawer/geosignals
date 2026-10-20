@@ -7,7 +7,7 @@
 #   podman build -t osmsignals .
 #   podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" \
 #       -v "$PWD:/data" osmsignals \
-#       node-density --input planet.osm.pbf --output node-density.pmtiles
+#       node-density --input planet.osm.pbf --output node-density.tif
 #
 # The build is meant to be reproducible, so that a later SLSA release
 # workflow can rebuild and attest it: the base image is pinned by digest

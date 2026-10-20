@@ -35,7 +35,7 @@ user into the container so the output belongs to you:
 ```sh
 podman build -t osmsignals .
 podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$PWD:/data" \
-  osmsignals node-density --input planet.osm.pbf --output node-density.pmtiles
+  osmsignals node-density --input planet.osm.pbf --output node-density.tif
 ```
 
 ## Output
