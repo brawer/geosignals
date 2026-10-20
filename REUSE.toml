@@ -9,9 +9,10 @@ SPDX-FileCopyrightText = "2026 Sascha Brawer <sascha@brawer.ch>"
 SPDX-License-Identifier = "MIT"
 
 # release-please's config and manifest are JSON, which cannot carry an SPDX
-# header comment; the manifest is also rewritten by the bot on every release.
+# header comment; the manifest is also rewritten by the bot on every release,
+# and so is CHANGELOG.md, which release-please generates.
 [[annotations]]
-path = ["release-please-config.json", ".release-please-manifest.json"]
+path = ["release-please-config.json", ".release-please-manifest.json", "CHANGELOG.md"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Sascha Brawer <sascha@brawer.ch>"
 SPDX-License-Identifier = "MIT"
