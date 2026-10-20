@@ -24,3 +24,9 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(ci)"
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(container)"

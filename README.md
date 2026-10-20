@@ -26,6 +26,18 @@ curl -s https://osm-pds.s3.amazonaws.com/2026/planet-261012.osm.pbf \
   | cargo run --release -- node-density --input - --output node-density.pmtiles
 ```
 
+### Container
+
+The [`Containerfile`](Containerfile) builds a ~3 MB image that holds
+just a statically linked binary. With rootless podman, map your own
+user into the container so the output belongs to you:
+
+```sh
+podman build -t osmsignals .
+podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$PWD:/data" \
+  osmsignals node-density --input planet.osm.pbf --output node-density.pmtiles
+```
+
 ## Output
 
 Tiles are 256×256 grayscale lossless WebP, zoom 0 to 10, so a pixel in
