@@ -3,22 +3,30 @@
 
 name: Container
 
-# Builds the container image with podman and runs it on the test extract.
-# Only runs when the container setup itself changes; Rust changes are
-# covered by test.yml, and building the image on every PR would be wasteful.
+# Builds the container image with podman on amd64 and arm64, runs it on the
+# test extract, and generates its SBOM, like release-build.yml does for a
+# release (minus publishing). Only runs when the container setup changes;
+# Rust changes are covered by test.yml, and building the image on every PR
+# would be wasteful.
 on:
   push:
     branches: [ "main" ]
     paths:
       - "Containerfile"
       - ".containerignore"
+      - "scripts/install-syft.sh"
+      - "scripts/sbom.sh"
       - ".github/workflows/container.yml"
+      - ".github/workflows/release-build.yml"
   pull_request:
     branches: [ "main" ]
     paths:
       - "Containerfile"
       - ".containerignore"
+      - "scripts/install-syft.sh"
+      - "scripts/sbom.sh"
       - ".github/workflows/container.yml"
+      - ".github/workflows/release-build.yml"
   workflow_dispatch:
 
 permissions: {}
@@ -29,9 +37,14 @@ concurrency:
 
 jobs:
   build:
-    name: Build and run container image
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: Build and run ${{ matrix.arch }} container image
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+        - { arch: amd64, runner: ubuntu-24.04 }
+        - { arch: arm64, runner: ubuntu-24.04-arm }
     permissions:
       contents: read
     steps:
@@ -39,8 +52,12 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
         persist-credentials: false
+    - name: Install podman and jq
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q podman jq
     - name: Build image
-      run: podman build --tag osmsignals .
+      run: podman build --platform "linux/${{ matrix.arch }}" --tag osmsignals .
     - name: Run on test extract
       run: |
         mkdir -p "$RUNNER_TEMP/data"
@@ -51,5 +68,19 @@ jobs:
           osmsignals node-density \
           --input zugerland.osm.pbf --output node-density.tif
         test -s "$RUNNER_TEMP/data/node-density.tif"
+    - name: Generate SBOM
+      run: |
+        scripts/install-syft.sh "$RUNNER_TEMP/bin"
+        podman save --format oci-archive --output "$RUNNER_TEMP/image.tar" osmsignals
+        PATH="$RUNNER_TEMP/bin:$PATH" scripts/sbom.sh "$RUNNER_TEMP/image.tar" \
+          ghcr.io/${{ github.repository }} "$(podman inspect --format '{{.Digest}}' osmsignals)" \
+          sbom.cdx.json
+        jq '{specVersion, components: (.components | length)}' sbom.cdx.json
+    - name: Upload SBOM
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      with:
+        name: sbom-${{ matrix.arch }}
+        path: sbom.cdx.json
+        retention-days: 7
     - name: Show image size
       run: podman image ls osmsignals
