@@ -35,6 +35,9 @@ pub struct Metadata {
     pub description: String,
     pub software: String,
     pub copyright: String,
+    /// Smallest and largest pixel value in the full-resolution image.
+    pub min_value: u16,
+    pub max_value: u16,
     /// XML for the GDAL_METADATA tag, such as band scale and offset.
     pub gdal_metadata: String,
 }
@@ -347,6 +350,10 @@ fn entries(
     e.push(tile_offsets);
     e.push(tile_byte_counts);
     e.push(shorts(339, &[1])); // SampleFormat: unsigned integer
+    if full {
+        e.push(shorts(340, &[meta.min_value])); // SMinSampleValue
+        e.push(shorts(341, &[meta.max_value])); // SMaxSampleValue
+    }
     if full {
         e.push(ascii(33432, &meta.copyright)); // Copyright
         let res = 2.0 * HALF_WORLD / f64::from(1u32 << PIXEL_ZOOM);

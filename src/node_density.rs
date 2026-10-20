@@ -143,6 +143,8 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         description: "OpenStreetMap node density".into(),
         software: format!("osmsignals {}", env!("CARGO_PKG_VERSION")),
         copyright: "© OpenStreetMap contributors, ODbL 1.0".into(),
+        min_value: hist.range().0,
+        max_value: hist.range().1,
         gdal_metadata: gdal_metadata(stats.nodes, &hist),
     };
     spool.write_cog(&cfg.output, &meta)?;

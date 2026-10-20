@@ -43,6 +43,13 @@ impl Histogram {
         }
     }
 
+    /// Smallest and largest value that occurs, or (0, 0) if none.
+    pub fn range(&self) -> (u16, u16) {
+        let min = self.counts.iter().position(|&c| c > 0).unwrap_or(0);
+        let max = self.counts.iter().rposition(|&c| c > 0).unwrap_or(0);
+        (min as u16, max as u16)
+    }
+
     pub fn counts(&self) -> &[u64] {
         &self.counts
     }
@@ -100,6 +107,11 @@ mod tests {
         assert_eq!(a.counts()[3], 2);
         assert_eq!(a.counts()[4095], 1);
         assert_eq!(a.counts().iter().sum::<u64>(), (1 << 40) + 5);
+        assert_eq!(a.range(), (0, 4095));
+        let mut c = Histogram::default();
+        assert_eq!(c.range(), (0, 0));
+        c.add(&[7, 9]);
+        assert_eq!(c.range(), (7, 9));
     }
 
     #[test]
