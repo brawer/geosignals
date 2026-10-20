@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// SPDX-License-Identifier: MIT
+
 //! The `node-density` pipeline: PBF → sorted keys → pyramid → PMTiles.
 
 use crate::{encode, extsort, output::Spool, pbf, pyramid, tile::TILE_SIZE};

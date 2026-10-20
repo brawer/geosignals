@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+# SPDX-License-Identifier: MIT
+
 """Compares image formats for node-density tiles.
 
 Reads the raw tile samples written by `osmsignals node-density --sample-dir`

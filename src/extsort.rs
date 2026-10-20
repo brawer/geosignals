@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// SPDX-License-Identifier: MIT
+
 //! External sort of `u64` keys that counts how often each key occurs.
 //!
 //! Keys are collected into memory buffers. A full buffer is sorted,

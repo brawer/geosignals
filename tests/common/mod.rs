@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// SPDX-License-Identifier: MIT
+
 //! A tiny PMTiles v3 reader for tests, written from the spec so that
 //! it checks our output independently of the writer library.
 

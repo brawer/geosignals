@@ -33,7 +33,10 @@ fn approx_nodes(z: u8, y: u32, pixels: &[u8]) -> f64 {
     total
 }
 
-/// A 40 KB extract around Zug, Switzerland; © OpenStreetMap contributors.
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// © OpenStreetMap contributors.
+//
+// SPDX-License-Identifier: MIT
 const ZUGERLAND: &str = "tests/data/zugerland.osm.pbf";
 
 #[test]

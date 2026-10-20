@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// SPDX-License-Identifier: MIT
+
 //! Turns per-pixel node counts into tile images.
 //!
 //! Each pixel stores node density (nodes per km² of real Earth surface)

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// SPDX-License-Identifier: MIT
+
 //! Parallel extraction of node sort keys from an OSM PBF stream.
 //!
 //! One thread reads raw blobs; worker threads decompress them, turn each

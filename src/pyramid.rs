@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// SPDX-License-Identifier: MIT
+
 //! Single-pass construction of the tile pyramid from a key-sorted stream.
 //!
 //! The input is a stream of `(pixel key, count)` pairs, sorted by Hilbert

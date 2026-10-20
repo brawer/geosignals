@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// SPDX-License-Identifier: MIT
+
 //! Collects encoded tiles and writes them as one PMTiles archive.
 //!
 //! Tiles arrive children-before-parents, so the zoom levels interleave.

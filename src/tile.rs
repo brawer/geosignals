@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+// SPDX-License-Identifier: MIT
+
 //! Web Mercator tile math and the Hilbert sort key.
 //!
 //! Every OSM node is mapped to a pixel at zoom 18 (a 256×256 tile at zoom 10
