@@ -191,7 +191,7 @@ mod tests {
                 assert!(pos[&(z, x, y)] < pos[&(z - 1, x / 2, y / 2)]);
             }
         }
-        // Within a zoom level, tiles come out in PMTiles (Hilbert) order.
+        // Within a zoom level, tiles come out in Hilbert order.
         for z in 0..=MAX_TILE_ZOOM {
             let ids: Vec<u64> = order
                 .iter()

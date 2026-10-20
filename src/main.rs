@@ -14,12 +14,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Computes OSM node density as a PMTiles raster pyramid.
+    /// Computes OSM node density as a Cloud-Optimized GeoTIFF.
     NodeDensity {
         /// OSM PBF file to read, or "-" for standard input.
         #[arg(long)]
         input: PathBuf,
-        /// PMTiles file to write.
+        /// GeoTIFF file to write.
         #[arg(long)]
         output: PathBuf,
         /// Directory for temporary files.
