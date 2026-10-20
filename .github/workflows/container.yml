@@ -3,10 +3,11 @@
 
 name: Container
 
-# Builds the container image with podman on amd64 and arm64, runs it on the
-# test extract, and generates its SBOM, like release-build.yml does for a
-# release (minus publishing). Only runs when the container setup changes;
-# Rust changes are covered by test.yml, and building the image on every PR
+# Builds the container image with podman, runs it on the test extract, and
+# generates its SBOM, like release-build.yml does for a release (minus
+# publishing). Only on amd64: arm64 rarely breaks on its own, so it is only
+# built at release time. Only runs when the container setup changes; Rust
+# changes are covered by test.yml, and building the image on every PR
 # would be wasteful.
 on:
   push:
@@ -37,14 +38,9 @@ concurrency:
 
 jobs:
   build:
-    name: Build and run ${{ matrix.arch }} container image
-    runs-on: ${{ matrix.runner }}
+    name: Build and run container image
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      matrix:
-        include:
-        - { arch: amd64, runner: ubuntu-24.04 }
-        - { arch: arm64, runner: ubuntu-24.04-arm }
     permissions:
       contents: read
     steps:
@@ -57,7 +53,7 @@ jobs:
         sudo apt-get update -q
         sudo apt-get install -y -q podman jq
     - name: Build image
-      run: podman build --platform "linux/${{ matrix.arch }}" --tag osmsignals .
+      run: podman build --tag osmsignals .
     - name: Run on test extract
       run: |
         mkdir -p "$RUNNER_TEMP/data"
@@ -79,7 +75,7 @@ jobs:
     - name: Upload SBOM
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       with:
-        name: sbom-${{ matrix.arch }}
+        name: sbom
         path: sbom.cdx.json
         retention-days: 7
     - name: Show image size
