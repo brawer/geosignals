@@ -8,5 +8,6 @@ target
 tests
 tools
 *.tif
+*.tiff
 *.osm.pbf
 scripts

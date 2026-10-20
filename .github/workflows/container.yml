@@ -62,8 +62,8 @@ jobs:
           --userns=keep-id --user "$(id -u):$(id -g)" \
           --volume "$RUNNER_TEMP/data:/data" \
           osmsignals node-density \
-          --input zugerland.osm.pbf --output node-density.tif
-        test -s "$RUNNER_TEMP/data/node-density.tif"
+          --input zugerland.osm.pbf --output-dir .
+        test -s "$RUNNER_TEMP/data/osm-node-density.2026-01-27.tiff"
     - name: Generate SBOM
       run: |
         scripts/install-syft.sh "$RUNNER_TEMP/bin"

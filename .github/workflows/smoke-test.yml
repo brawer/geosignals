@@ -43,12 +43,12 @@ jobs:
     - name: Run command-line tool
       run: |
         cargo run --locked --release -- node-density \
-          --input liechtenstein.osm.pbf --output liechtenstein.tif
-        ls -l liechtenstein.tif
+          --input liechtenstein.osm.pbf --output-dir out
+        ls -l out/osm-node-density.*.tiff
     - name: Check output with GDAL
       run: |
         sudo apt-get update -q
         sudo apt-get install -y -q gdal-bin python3-gdal
-        gdalinfo liechtenstein.tif
+        gdalinfo out/osm-node-density.*.tiff
         /usr/bin/python3 -W ignore -m osgeo_utils.samples.validate_cloud_optimized_geotiff \
-          --full-check=yes liechtenstein.tif
+          --full-check=yes out/osm-node-density.*.tiff

@@ -19,9 +19,10 @@ enum Command {
         /// OSM PBF file to read, or "-" for standard input.
         #[arg(long)]
         input: PathBuf,
-        /// GeoTIFF file to write.
+        /// Directory for the GeoTIFF, which gets named after the date of
+        /// the input data, such as osm-node-density.2026-10-19.tiff.
         #[arg(long)]
-        output: PathBuf,
+        output_dir: PathBuf,
         /// Working directory for temporary files, which can take several
         /// times the size of the input. Each signal uses its own
         /// subdirectory and cleans up leftovers of interrupted runs.
@@ -46,7 +47,7 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Command::NodeDensity {
             input,
-            output,
+            output_dir,
             workdir,
             threads,
             run_size,
@@ -59,7 +60,7 @@ fn main() -> Result<()> {
                     .unwrap_or(1)
             });
             let cfg = osmsignals::node_density::Config {
-                output,
+                output_dir,
                 workdir,
                 threads,
                 run_size,

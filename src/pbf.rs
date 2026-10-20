@@ -20,6 +20,9 @@ pub struct Stats {
     pub nodes: u64,
     /// Nodes outside the Web Mercator latitude range, which we skip.
     pub skipped: u64,
+    /// When the data was current, in seconds since the Unix epoch,
+    /// from the `osmosis_replication_timestamp` of the PBF header.
+    pub timestamp: i64,
 }
 
 pub struct Options<'a> {
@@ -40,7 +43,7 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Vec<Run>
     let (tx, rx) = crossbeam_channel::bounded::<osmpbf::Blob>(opts.threads * 4);
     let mut runs = Vec::new();
 
-    std::thread::scope(|s| -> Result<()> {
+    let timestamp = std::thread::scope(|s| -> Result<i64> {
         let mut workers = Vec::new();
         for _ in 0..opts.threads.max(1) {
             let rx = rx.clone();
@@ -88,6 +91,7 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Vec<Run>
 
         let mut sorted_by_type = false;
         let mut seen_header = false;
+        let mut timestamp = None;
         let read_result = (|| -> Result<()> {
             for blob in BlobReader::new(input) {
                 let blob = blob.context("reading PBF blob")?;
@@ -103,6 +107,10 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Vec<Run>
                             .optional_features()
                             .iter()
                             .any(|f| f == "Sort.Type_then_ID");
+                        timestamp = header.osmosis_replication_timestamp();
+                        if timestamp.is_none() {
+                            bail!("PBF header has no osmosis_replication_timestamp");
+                        }
                         seen_header = true;
                     }
                     osmpbf::BlobType::OsmData => {
@@ -119,18 +127,23 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Vec<Run>
                     osmpbf::BlobType::Unknown(_) => {}
                 }
             }
+            if !seen_header {
+                bail!("PBF input has no header");
+            }
             Ok(())
         })();
         drop(tx);
         for w in workers {
             runs.extend(w.join().expect("worker panicked")?);
         }
-        read_result
+        read_result?;
+        Ok(timestamp.expect("checked when reading the header"))
     })?;
 
     let stats = Stats {
         nodes: nodes.into_inner(),
         skipped: skipped.into_inner(),
+        timestamp,
     };
     Ok((runs, stats))
 }
