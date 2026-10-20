@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+# SPDX-License-Identifier: MIT
+#
+# Config for `cargo deny` (https://github.com/EmbarkStudios/cargo-deny):
+# checks the dependency graph for known vulnerabilities, disallowed
+# licenses, banned/duplicated crates, and untrusted sources.
+# Run locally with `cargo deny check`.
+
+[graph]
+all-features = true
+
+# ── advisories: RUSTSEC/OSV vulnerabilities, unmaintained/yanked crates ─────
+[advisories]
+yanked = "deny"
+ignore = []
+
+# ── licenses: only accept licenses we've reviewed as OK to redistribute ─────
+[licenses]
+version = 2
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "MIT",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.8
+
+# ── bans: banned crates, duplicate-version bloat, wildcard versions ─────────
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+
+# ── sources: only allow crates.io, not arbitrary git/registries ─────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
