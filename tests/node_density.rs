@@ -52,6 +52,37 @@ fn zugerland() {
     assert!(gdal.contains(r#"<Item name="NODES">1790</Item>"#), "{gdal}");
     assert!(gdal.contains(r#"role="scale">0.01<"#), "{gdal}");
     assert!(gdal.contains(r#"role="offset">-15.01<"#), "{gdal}");
+
+    // The embedded histogram matches the full-resolution pixels.
+    let mut hist = std::collections::BTreeMap::<u64, u64>::new();
+    for row in gdal.split("<Row ").skip(1) {
+        let f: Vec<u64> = row
+            .split("<F>")
+            .skip(1)
+            .map(|f| f.split('<').next().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(f[1], f[0] + 1, "bin size 1");
+        hist.insert(f[0], f[2]);
+    }
+    assert_eq!(hist.values().sum::<u64>(), 1 << 36, "every pixel counted");
+    let mut expected = std::collections::BTreeMap::<u64, u64>::new();
+    for ((z, _, _), px) in &image.tiles {
+        for &v in px.iter().filter(|_| *z == 10) {
+            *expected.entry(u64::from(v)).or_default() += 1;
+        }
+    }
+    for (v, n) in &expected {
+        if *v > 0 {
+            assert_eq!(hist[v], *n, "value {v}");
+        }
+    }
+    let nonzero: u64 = hist.iter().filter(|(v, _)| **v > 0).map(|(_, n)| n).sum();
+    assert_eq!(nonzero, summary.pixels);
+    assert_eq!(
+        *hist.keys().last().unwrap(),
+        *expected.keys().last().unwrap()
+    );
+
     for ovr in &image.ifds[1..] {
         assert_eq!(ovr[&254].int(), 1, "reduced-resolution image");
     }

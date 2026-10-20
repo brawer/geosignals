@@ -4,7 +4,9 @@
 //! The `node-density` pipeline: PBF → sorted keys → pyramid → GeoTIFF.
 
 use crate::cog::{Metadata, Spool};
-use crate::{encode, extsort, pbf, pyramid, tile::TILE_SIZE};
+use crate::histogram::Histogram;
+use crate::tile::{MAX_TILE_ZOOM, TILE_SIZE};
+use crate::{encode, extsort, pbf, pyramid};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -50,6 +52,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
 
     let mut spool = Spool::new(&cfg.tmpdir)?;
     let mut pixels = 0u64;
+    let mut hist = Histogram::default();
     if let Some(dir) = &cfg.sample_dir {
         std::fs::create_dir_all(dir)?;
     }
@@ -61,15 +64,21 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         let (job_tx, job_rx) = crossbeam_channel::bounded::<Job>(cfg.threads * 8);
         let (res_tx, res_rx) =
             crossbeam_channel::bounded::<(u64, u8, u32, u32, Result<Vec<u8>>)>(cfg.threads * 8);
+        let mut workers = Vec::new();
         for _ in 0..cfg.threads.max(1) {
             let (job_rx, res_tx) = (job_rx.clone(), res_tx.clone());
-            s.spawn(move || {
+            workers.push(s.spawn(move || {
+                let mut hist = Histogram::default();
                 for (seq, z, x, y, px) in job_rx {
+                    if z == MAX_TILE_ZOOM {
+                        hist.add(&px);
+                    }
                     if res_tx.send((seq, z, x, y, encode::zstd(&px))).is_err() {
                         break;
                     }
                 }
-            });
+                hist
+            }));
         }
         drop((job_rx, res_tx));
         let spool = &mut spool;
@@ -107,6 +116,9 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         let built = builder.finish();
         drop(job_tx);
         let collected = collector.join().expect("collector panicked");
+        for w in workers {
+            hist.merge(&w.join().expect("encoder panicked"));
+        }
         built?;
         collected
     })?;
@@ -114,6 +126,11 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         "built pyramid from {pixels} non-empty pixels in {:.0?}",
         start.elapsed()
     );
+
+    // Tiles without nodes were never emitted; their pixels are all zero.
+    let full_tiles = spool.tiles_per_zoom[MAX_TILE_ZOOM as usize];
+    let empty_tiles = (1u64 << (2 * MAX_TILE_ZOOM)) - full_tiles;
+    hist.add_value(0, empty_tiles * (TILE_SIZE * TILE_SIZE) as u64);
 
     let summary = Summary {
         nodes: stats.nodes,
@@ -126,7 +143,9 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         description: "OpenStreetMap node density".into(),
         software: format!("osmsignals {}", env!("CARGO_PKG_VERSION")),
         copyright: "© OpenStreetMap contributors, ODbL 1.0".into(),
-        gdal_metadata: gdal_metadata(stats.nodes),
+        min_value: hist.range().0,
+        max_value: hist.range().1,
+        gdal_metadata: gdal_metadata(stats.nodes, &hist),
     };
     spool.write_cog(&cfg.output, &meta)?;
     eprintln!("wrote {} in {:.0?}", cfg.output.display(), start.elapsed());
@@ -144,8 +163,8 @@ fn write_sample(dir: &Path, z: u8, x: u32, y: u32, counts: &pyramid::Counts) -> 
 }
 
 /// Band description and scale for GDAL, so that tools like QGIS show
-/// log2(nodes/km²) instead of raw pixel values.
-fn gdal_metadata(nodes: u64) -> String {
+/// log2(nodes/km²) instead of raw pixel values, plus the value histogram.
+fn gdal_metadata(nodes: u64, hist: &Histogram) -> String {
     let scale = 1.0 / encode::STEPS_PER_OCTAVE;
     let offset = encode::LOG2_MIN_DENSITY - scale;
     format!(
@@ -156,11 +175,13 @@ fn gdal_metadata(nodes: u64) -> String {
             r#"<Item name="DESCRIPTION" sample="0" role="description">log2(OSM nodes per km²)</Item>"#,
             r#"<Item name="SCALE" sample="0" role="scale">{scale}</Item>"#,
             r#"<Item name="OFFSET" sample="0" role="offset">{offset}</Item>"#,
+            "{rat}",
             "</GDALMetadata>"
         ),
         nodes = nodes,
         scale = scale,
         offset = offset,
         neg_offset = -offset,
+        rat = hist.rat_xml(),
     )
 }

@@ -63,6 +63,12 @@ inflated. Overview pixels sum the counts of their four children before
 dividing by area, so every level is a true average density. The scale
 is fixed, so values from different months are comparable.
 
+The file also embeds an exact histogram of the full-resolution pixel
+values, one bucket per value, as a GDAL Raster Attribute Table. GDAL
+3.12+ and QGIS read it without scanning the image, and it lets you turn
+any pixel value into a percentile. Bucket 0 counts pixels without
+nodes; no NoData value is set, since zero nodes is a measurement.
+
 ## How it works
 
 1. Worker threads decode the PBF and map every node to the Hilbert index
