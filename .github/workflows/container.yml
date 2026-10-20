@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+# SPDX-License-Identifier: MIT
+
+name: Container
+
+# Builds the container image with podman and runs it on the test extract.
+# Only runs when the container setup itself changes; Rust changes are
+# covered by test.yml, and building the image on every PR would be wasteful.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "Containerfile"
+      - ".containerignore"
+      - ".github/workflows/container.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "Containerfile"
+      - ".containerignore"
+      - ".github/workflows/container.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and run container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Build image
+      run: podman build --tag osmsignals .
+    - name: Run on test extract
+      run: |
+        mkdir -p "$RUNNER_TEMP/data"
+        cp tests/data/zugerland.osm.pbf "$RUNNER_TEMP/data/"
+        podman run --rm --network=none \
+          --userns=keep-id --user "$(id -u):$(id -g)" \
+          --volume "$RUNNER_TEMP/data:/data" \
+          osmsignals node-density \
+          --input zugerland.osm.pbf --output node-density.pmtiles
+        test -s "$RUNNER_TEMP/data/node-density.pmtiles"
+    - name: Show image size
+      run: podman image ls osmsignals
