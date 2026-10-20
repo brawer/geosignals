@@ -5,7 +5,7 @@
 //!
 //! Every OSM node is mapped to a pixel at zoom 18 (a 256×256 tile at zoom 10
 //! has one pixel per zoom-18 tile). The sort key of a pixel is its position
-//! on the Hilbert curve of order 18, as used by PMTiles for tile IDs. Because
+//! on the Hilbert curve of order 18. Because
 //! the Hilbert curve visits every quadrant of every level in one contiguous
 //! run, `key >> (2 * k)` is the Hilbert index of the enclosing tile at zoom
 //! `18 - k`. Sorting by key therefore visits the tile tree in depth-first
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn key_prefix_is_ancestor_key() {
-        // The pyramid builder relies on this, and so does PMTiles clustering.
+        // The pyramid builder relies on this.
         let mut s = 0x1234_5678_u64;
         for _ in 0..20_000 {
             s ^= s << 13;

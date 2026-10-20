@@ -7,5 +7,5 @@
 target
 tests
 tools
-*.pmtiles
+*.tif
 *.osm.pbf

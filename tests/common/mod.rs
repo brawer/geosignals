@@ -1,129 +1,156 @@
 // SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
 // SPDX-License-Identifier: MIT
 
-//! A tiny PMTiles v3 reader for tests, written from the spec so that
-//! it checks our output independently of the writer library.
+//! A tiny BigTIFF reader for tests, written from the TIFF and COG specs
+//! so that it checks our output independently of the writer.
 
 use std::collections::BTreeMap;
-use std::io::Read;
 
-pub struct Archive {
-    pub header: Vec<u8>,
-    pub metadata: String,
-    /// Tile data by (z, x, y).
-    pub tiles: BTreeMap<(u8, u32, u32), Vec<u8>>,
+pub struct Image {
+    /// Tag values of each directory, full resolution first.
+    pub ifds: Vec<BTreeMap<u16, Field>>,
+    /// Decoded pixels of each non-empty tile, by (zoom, x, y).
+    pub tiles: BTreeMap<(u8, u32, u32), Vec<u16>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Field {
+    Ascii(String),
+    Ints(Vec<u64>),
+    Doubles(Vec<f64>),
+}
+
+impl Field {
+    pub fn int(&self) -> u64 {
+        match self {
+            Field::Ints(v) if v.len() == 1 => v[0],
+            _ => panic!("not a single integer: {self:?}"),
+        }
+    }
+    pub fn ints(&self) -> &[u64] {
+        match self {
+            Field::Ints(v) => v,
+            _ => panic!("not integers: {self:?}"),
+        }
+    }
+    pub fn ascii(&self) -> &str {
+        match self {
+            Field::Ascii(s) => s,
+            _ => panic!("not ASCII: {self:?}"),
+        }
+    }
+}
+
+fn u16_at(b: &[u8], pos: usize) -> u16 {
+    u16::from_le_bytes(b[pos..pos + 2].try_into().unwrap())
+}
+
+fn u32_at(b: &[u8], pos: usize) -> u32 {
+    u32::from_le_bytes(b[pos..pos + 4].try_into().unwrap())
 }
 
 fn u64_at(b: &[u8], pos: usize) -> u64 {
     u64::from_le_bytes(b[pos..pos + 8].try_into().unwrap())
 }
 
-fn varint(b: &[u8], pos: &mut usize) -> u64 {
-    let mut v = 0u64;
-    let mut shift = 0;
-    loop {
-        let byte = b[*pos];
-        *pos += 1;
-        v |= u64::from(byte & 0x7f) << shift;
-        if byte < 0x80 {
-            return v;
+fn field(b: &[u8], entry: usize) -> (u16, Field) {
+    let tag = u16_at(b, entry);
+    let typ = u16_at(b, entry + 2);
+    let count = u64_at(b, entry + 4) as usize;
+    let size = match typ {
+        2 => 1,
+        3 => 2,
+        4 => 4,
+        12 | 16 => 8,
+        _ => panic!("tag {tag}: unexpected type {typ}"),
+    };
+    let pos = if size * count <= 8 {
+        entry + 12
+    } else {
+        let p = u64_at(b, entry + 12) as usize;
+        assert_eq!(p % 2, 0, "tag {tag}: odd offset");
+        p
+    };
+    let value = match typ {
+        2 => {
+            let s = &b[pos..pos + count];
+            assert_eq!(s[count - 1], 0, "tag {tag}: missing NUL");
+            Field::Ascii(String::from_utf8(s[..count - 1].to_vec()).unwrap())
         }
-        shift += 7;
-    }
+        3 => Field::Ints(
+            (0..count)
+                .map(|i| u64::from(u16_at(b, pos + 2 * i)))
+                .collect(),
+        ),
+        4 => Field::Ints(
+            (0..count)
+                .map(|i| u64::from(u32_at(b, pos + 4 * i)))
+                .collect(),
+        ),
+        16 => Field::Ints((0..count).map(|i| u64_at(b, pos + 8 * i)).collect()),
+        12 => Field::Doubles(
+            (0..count)
+                .map(|i| f64::from_le_bytes(b[pos + 8 * i..pos + 8 * i + 8].try_into().unwrap()))
+                .collect(),
+        ),
+        _ => unreachable!(),
+    };
+    (tag, value)
 }
 
-fn gunzip(b: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    flate2::read::GzDecoder::new(b)
-        .read_to_end(&mut out)
-        .unwrap();
-    out
-}
-
-fn tile_id_to_zxy(id: u64) -> (u8, u32, u32) {
-    let mut base = 0u64;
-    for z in 0..32u8 {
-        let n = 1u64 << (2 * z);
-        if id < base + n {
-            let (x, y) = if z == 0 {
-                (0, 0)
-            } else {
-                fast_hilbert::h2xy::<u32>(id - base, z)
-            };
-            return (z, x, y);
+pub fn read(b: &[u8]) -> Image {
+    assert_eq!(&b[0..4], b"II\x2b\x00", "little-endian BigTIFF");
+    assert_eq!(u16_at(b, 4), 8);
+    let mut ifds = Vec::new();
+    let mut pos = u64_at(b, 8) as usize;
+    while pos != 0 {
+        let n = u64_at(b, pos) as usize;
+        let mut ifd = BTreeMap::new();
+        let mut last = 0;
+        for i in 0..n {
+            let (tag, value) = field(b, pos + 8 + 20 * i);
+            assert!(tag > last, "tags out of order");
+            last = tag;
+            ifd.insert(tag, value);
         }
-        base += n;
+        ifds.push(ifd);
+        pos = u64_at(b, pos + 8 + 20 * n) as usize;
     }
-    panic!("tile id {id} too large");
-}
 
-/// Entries of a directory: (tile_id, offset, length, run_length).
-fn directory(b: &[u8]) -> Vec<(u64, u64, u64, u64)> {
-    let b = gunzip(b);
-    let mut pos = 0;
-    let n = varint(&b, &mut pos) as usize;
-    let mut ids = Vec::with_capacity(n);
-    let mut last = 0;
-    for _ in 0..n {
-        last += varint(&b, &mut pos);
-        ids.push(last);
-    }
-    let runs: Vec<u64> = (0..n).map(|_| varint(&b, &mut pos)).collect();
-    let lens: Vec<u64> = (0..n).map(|_| varint(&b, &mut pos)).collect();
-    let mut offsets: Vec<u64> = Vec::with_capacity(n);
-    for i in 0..n {
-        let v = varint(&b, &mut pos);
-        offsets.push(if v == 0 && i > 0 {
-            offsets[i - 1] + lens[i - 1]
-        } else {
-            v - 1
-        });
-    }
-    assert_eq!(pos, b.len(), "trailing bytes in directory");
-    (0..n)
-        .map(|i| (ids[i], offsets[i], lens[i], runs[i]))
-        .collect()
-}
-
-pub fn read(data: &[u8]) -> Archive {
-    assert_eq!(&data[0..7], b"PMTiles");
-    assert_eq!(data[7], 3);
-    assert_eq!(data[97], 2, "internal compression should be gzip");
-    let header = data[..127].to_vec();
-    let (root_off, root_len) = (u64_at(data, 8) as usize, u64_at(data, 16) as usize);
-    let (meta_off, meta_len) = (u64_at(data, 24) as usize, u64_at(data, 32) as usize);
-    let leaf_off = u64_at(data, 40) as usize;
-    let data_off = u64_at(data, 56) as usize;
-    let metadata = String::from_utf8(gunzip(&data[meta_off..meta_off + meta_len])).unwrap();
+    let levels = ifds.len();
     let mut tiles = BTreeMap::new();
-    let mut stack = vec![directory(&data[root_off..root_off + root_len])];
-    while let Some(entries) = stack.pop() {
-        for (id, off, len, run) in entries {
-            let (off, len) = (off as usize, len as usize);
-            if run == 0 {
-                stack.push(directory(&data[leaf_off + off..leaf_off + off + len]));
+    let mut prev_end = 0;
+    // COG: smallest overview's data first, full resolution last.
+    for (i, ifd) in ifds.iter().enumerate().rev() {
+        let zoom = (levels - 1 - i) as u8;
+        assert_eq!(ifd[&256].int(), 256 << zoom, "ImageWidth");
+        assert_eq!(ifd[&259].int(), 50000, "Zstandard");
+        assert_eq!(ifd[&258].int(), 16, "BitsPerSample");
+        let offsets = ifd[&324].ints();
+        let counts = ifd[&325].ints();
+        let n = 1usize << zoom;
+        assert_eq!(offsets.len(), n * n);
+        assert_eq!(counts.len(), n * n);
+        for (t, (&off, &len)) in offsets.iter().zip(counts).enumerate() {
+            if len == 0 {
+                assert_eq!(off, 0, "empty tile with an offset");
                 continue;
             }
-            for i in 0..run {
-                let body = data[data_off + off..data_off + off + len].to_vec();
-                assert!(tiles.insert(tile_id_to_zxy(id + i), body).is_none());
-            }
+            let (off, len) = (off as usize, len as usize);
+            assert!(off > prev_end, "tiles out of order");
+            prev_end = off;
+            // GDAL's tile leader and trailer.
+            assert_eq!(u32_at(b, off - 4) as usize, len, "leader");
+            assert_eq!(&b[off + len..off + len + 4], &b[off + len - 4..off + len]);
+            let raw = zstd::bulk::decompress(&b[off..off + len], 1 << 17).unwrap();
+            assert_eq!(raw.len(), 2 * 256 * 256);
+            let px = raw
+                .chunks(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            let (x, y) = ((t % n) as u32, (t / n) as u32);
+            tiles.insert((zoom, x, y), px);
         }
     }
-    Archive {
-        header,
-        metadata,
-        tiles,
-    }
-}
-
-/// Decodes a grayscale WebP tile into 256×256 pixel values.
-pub fn decode_webp(data: &[u8]) -> Vec<u8> {
-    let mut dec = image_webp::WebPDecoder::new(std::io::Cursor::new(data)).unwrap();
-    let (w, h) = dec.dimensions();
-    assert_eq!((w, h), (256, 256));
-    let mut buf = vec![0u8; dec.output_buffer_size().unwrap()];
-    dec.read_image(&mut buf).unwrap();
-    let channels = buf.len() / (256 * 256);
-    buf.chunks(channels).map(|c| c[0]).collect()
+    Image { ifds, tiles }
 }

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
 // SPDX-License-Identifier: MIT
 
-//! The `node-density` pipeline: PBF → sorted keys → pyramid → PMTiles.
+//! The `node-density` pipeline: PBF → sorted keys → pyramid → GeoTIFF.
 
-use crate::{encode, extsort, output::Spool, pbf, pyramid, tile::TILE_SIZE};
+use crate::cog::{Metadata, Spool};
+use crate::{encode, extsort, pbf, pyramid, tile::TILE_SIZE};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -56,7 +57,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
     // Tiles are encoded in parallel but spooled in the order the pyramid
     // emitted them, so each zoom level stays in Hilbert order.
     std::thread::scope(|s| -> Result<()> {
-        type Job = (u64, u8, u32, u32, Vec<u8>);
+        type Job = (u64, u8, u32, u32, Vec<u16>);
         let (job_tx, job_rx) = crossbeam_channel::bounded::<Job>(cfg.threads * 8);
         let (res_tx, res_rx) =
             crossbeam_channel::bounded::<(u64, u8, u32, u32, Result<Vec<u8>>)>(cfg.threads * 8);
@@ -64,7 +65,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
             let (job_rx, res_tx) = (job_rx.clone(), res_tx.clone());
             s.spawn(move || {
                 for (seq, z, x, y, px) in job_rx {
-                    if res_tx.send((seq, z, x, y, encode::webp(&px))).is_err() {
+                    if res_tx.send((seq, z, x, y, encode::zstd(&px))).is_err() {
                         break;
                     }
                 }
@@ -121,19 +122,13 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         tiles_per_zoom: spool.tiles_per_zoom.clone(),
         bytes_per_zoom: spool.bytes_per_zoom.clone(),
     };
-    let metadata = format!(
-        concat!(
-            r#"{{"name":"OSM node density","#,
-            r#""description":"OpenStreetMap nodes per km², log scale: value v>0 means {} * 2^((v-1)/{}) nodes/km²; 0 means no nodes","#,
-            r#""attribution":"© OpenStreetMap contributors","#,
-            r#""generator":"osmsignals {}","nodes":{}}}"#
-        ),
-        encode::MIN_DENSITY,
-        encode::STEPS_PER_OCTAVE,
-        env!("CARGO_PKG_VERSION"),
-        stats.nodes,
-    );
-    spool.write_pmtiles(&cfg.output, &metadata)?;
+    let meta = Metadata {
+        description: "OpenStreetMap node density".into(),
+        software: format!("osmsignals {}", env!("CARGO_PKG_VERSION")),
+        copyright: "© OpenStreetMap contributors, ODbL 1.0".into(),
+        gdal_metadata: gdal_metadata(stats.nodes),
+    };
+    spool.write_cog(&cfg.output, &meta)?;
     eprintln!("wrote {} in {:.0?}", cfg.output.display(), start.elapsed());
     Ok(summary)
 }
@@ -146,4 +141,26 @@ fn write_sample(dir: &Path, z: u8, x: u32, y: u32, counts: &pyramid::Counts) -> 
     let data = zstd::encode_all(raw.as_slice(), 3)?;
     std::fs::write(dir.join(format!("{z}-{x}-{y}.u32.zst")), data)?;
     Ok(())
+}
+
+/// Band description and scale for GDAL, so that tools like QGIS show
+/// log2(nodes/km²) instead of raw pixel values.
+fn gdal_metadata(nodes: u64) -> String {
+    let scale = 1.0 / encode::STEPS_PER_OCTAVE;
+    let offset = encode::LOG2_MIN_DENSITY - scale;
+    format!(
+        concat!(
+            "<GDALMetadata>",
+            r#"<Item name="NODES">{nodes}</Item>"#,
+            r#"<Item name="ENCODING">v = 0: no nodes; otherwise log2(nodes per km²) = {scale} * v - {neg_offset}</Item>"#,
+            r#"<Item name="DESCRIPTION" sample="0" role="description">log2(OSM nodes per km²)</Item>"#,
+            r#"<Item name="SCALE" sample="0" role="scale">{scale}</Item>"#,
+            r#"<Item name="OFFSET" sample="0" role="offset">{offset}</Item>"#,
+            "</GDALMetadata>"
+        ),
+        nodes = nodes,
+        scale = scale,
+        offset = offset,
+        neg_offset = -offset,
+    )
 }

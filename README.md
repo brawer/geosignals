@@ -10,7 +10,7 @@ SPDX-License-Identifier: MIT
 
 Ranking signals for [OpenStreetMap](https://www.openstreetmap.org/),
 computed from the planet file and published as
-[PMTiles](https://docs.protomaps.com/pmtiles/) raster pyramids.
+[Cloud-Optimized GeoTIFFs](https://cogeo.org/).
 
 Work in progress. The first signal is **node density**: how many OSM
 nodes there are per km² of Earth surface, at a resolution of zoom-18
@@ -20,10 +20,10 @@ Web Mercator tiles (~150 m at the equator), similar in spirit to
 ## Usage
 
 ```sh
-cargo run --release -- node-density --input planet.osm.pbf --output node-density.pmtiles
+cargo run --release -- node-density --input planet.osm.pbf --output node-density.tif
 # or stream the planet without storing it:
 curl -s https://osm-pds.s3.amazonaws.com/2026/planet-261012.osm.pbf \
-  | cargo run --release -- node-density --input - --output node-density.pmtiles
+  | cargo run --release -- node-density --input - --output node-density.tif
 ```
 
 ### Container
@@ -35,30 +35,46 @@ user into the container so the output belongs to you:
 ```sh
 podman build -t osmsignals .
 podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$PWD:/data" \
-  osmsignals node-density --input planet.osm.pbf --output node-density.pmtiles
+  osmsignals node-density --input planet.osm.pbf --output node-density.tif
 ```
 
 ## Output
 
-Tiles are 256×256 grayscale lossless WebP, zoom 0 to 10, so a pixel in
-a zoom-10 tile is one zoom-18 tile. A pixel value `v` of 0 means no
-nodes; otherwise the density is `2^-16 · 2^((v-1)/6)` nodes per km²,
-i.e. six steps per doubling. Overview tiles sum the counts of their
-four children before dividing by area, so every zoom level is a true
-average density. The scale is fixed, so values from different months
-are comparable.
+A Cloud-Optimized GeoTIFF (BigTIFF) in Web Mercator (EPSG:3857) with
+one 16-bit band, tiled 256×256 and compressed with Zstandard. The
+full-resolution image is 262,144 pixels wide, so one pixel covers one
+zoom-18 tile; ten overviews halve the resolution down to a single
+256×256 tile. Tiles without any nodes are not stored, and GDAL reads
+them as zero. The planet comes to about 3 GB.
+
+Pixels hold node density on a log scale with 100 steps per doubling:
+
+```
+v = 0      no nodes
+v > 0      log2(nodes per km²) = 0.01 · v − 15.01
+```
+
+Each step is a 0.7% change in density, and the densest place on the
+planet needs about 3440, so values fit in 12 bits. The file declares
+this scale and offset in its GDAL metadata, so QGIS and GDAL show
+log2(nodes/km²) directly. Density is measured against true area on the
+sphere, not Web Mercator area, so pixels near the poles are not
+inflated. Overview pixels sum the counts of their four children before
+dividing by area, so every level is a true average density. The scale
+is fixed, so values from different months are comparable.
 
 ## How it works
 
 1. Worker threads decode the PBF and map every node to the Hilbert index
-   of its zoom-18 tile, the same curve PMTiles uses for tile IDs.
+   of its zoom-18 tile.
 2. Keys are sorted in memory-bounded runs, counted, and spilled to disk.
 3. A k-way merge streams `(pixel, count)` in Hilbert order. Because the
    Hilbert curve visits every sub-tree contiguously, only the chain of
    tiles from the root to the current zoom-10 tile is ever in memory;
    finished tiles are encoded and folded into their parent.
-4. Tiles are spooled per zoom level and concatenated into a clustered
-   PMTiles archive.
+4. Tiles are spooled per zoom level, then written into the GeoTIFF in
+   the order GDAL expects of a COG: smallest overview first, each level
+   in row-major order.
 
 ## Tests
 
