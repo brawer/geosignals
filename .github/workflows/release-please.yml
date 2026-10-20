@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+# SPDX-License-Identifier: MIT
+
+name: release-please
+
+# Maintains a release PR (version bump and CHANGELOG.md entries, driven by
+# the Conventional Commits PR titles that pr-title-lint.yml enforces) and,
+# once that PR is merged, tags the commit and publishes a GitHub Release.
+#
+# Runs as the account-wide release GitHub App rather than the built-in
+# GITHUB_TOKEN, because events caused by GITHUB_TOKEN don't trigger other
+# workflows: the release PR would never get its required test run, and the
+# release tag would never start smoke-test.yml.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # kick a run by hand if a push-triggered one was skipped
+
+permissions: {}
+
+jobs:
+  release-please:
+    name: Open/update the release PR, or publish a release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    if: vars.RELEASE_PLEASE_APP_CLIENT_ID != ''
+    steps:
+    - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+      id: app-token
+      with:
+        client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+        private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+        permission-contents: write # tag + GitHub release
+        permission-pull-requests: write # open and update the release PR
+
+    - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # v5.0.0
+      with:
+        token: ${{ steps.app-token.outputs.token }}

@@ -5,6 +5,9 @@ SPDX-License-Identifier: MIT
 
 # OSM Signals
 
+[![Tests](https://github.com/brawer/osmsignals/actions/workflows/test.yml/badge.svg)](https://github.com/brawer/osmsignals/actions/workflows/test.yml)
+[![REUSE status](https://api.reuse.software/badge/github.com/brawer/osmsignals)](https://api.reuse.software/info/github.com/brawer/osmsignals)
+
 Ranking signals for [OpenStreetMap](https://www.openstreetmap.org/),
 computed from the planet file and published as
 [PMTiles](https://docs.protomaps.com/pmtiles/) raster pyramids.
@@ -51,6 +54,17 @@ are comparable.
 around Zug. A smoke test on Liechtenstein from Geofabrik runs for
 release tags and on demand (see `.github/workflows/smoke-test.yml`);
 locally, point `OSMSIGNALS_SMOKE_PBF` at any extract to run it.
+
+## Contributing
+
+PR titles follow [Conventional Commits](https://www.conventionalcommits.org/)
+(`feat: …`, `fix: …`, `docs: …`), since PRs are squash-merged with
+the title as commit message. Every file carries SPDX headers; check
+with `reuse lint`.
+
+Releases are cut by [release-please](https://github.com/googleapis/release-please):
+merging its release PR bumps the version, updates `CHANGELOG.md`, tags
+the commit and publishes a GitHub Release.
 
 ## License
 

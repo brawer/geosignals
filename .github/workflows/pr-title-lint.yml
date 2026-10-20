@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+# SPDX-License-Identifier: MIT
+
+name: Lint PR title
+
+# Enforces Conventional Commits (https://www.conventionalcommits.org/) for
+# PR titles. PRs are squash-merged with the PR title as the commit title,
+# so this is what lands in main's history.
+#
+# pull_request_target (not pull_request) so this also runs for PRs from
+# forks: it only reads the PR title, it doesn't run any code from the fork.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint-pr-title:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+    - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50  # v6.1.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
