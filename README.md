@@ -62,6 +62,10 @@ PR titles follow [Conventional Commits](https://www.conventionalcommits.org/)
 the title as commit message. Every file carries SPDX headers; check
 with `reuse lint`.
 
+Releases are cut by [release-please](https://github.com/googleapis/release-please):
+merging its release PR bumps the version, updates `CHANGELOG.md`, tags
+the commit and publishes a GitHub Release.
+
 ## License
 
 Code: [MIT](LICENSE). Output data is derived from OpenStreetMap,
