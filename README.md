@@ -48,7 +48,8 @@ are comparable.
 ## Tests
 
 `cargo test` runs unit tests and an end-to-end test on a small extract
-around Zug. CI also runs a smoke test on Liechtenstein from Geofabrik;
+around Zug. A smoke test on Liechtenstein from Geofabrik runs for
+release tags and on demand (see `.github/workflows/smoke-test.yml`);
 locally, point `OSMSIGNALS_SMOKE_PBF` at any extract to run it.
 
 ## License

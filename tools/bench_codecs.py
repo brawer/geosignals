@@ -16,6 +16,7 @@ Requires: numpy, imagecodecs.
 
 import argparse
 import math
+import multiprocessing
 import os
 import sys
 from collections import defaultdict
@@ -59,12 +60,16 @@ def encoders():
     """name -> (scale, encode(arr) -> bytes, decode(bytes) -> arr or None)."""
     e = {}
     e["png8"] = ("q8", lambda a: ic.png_encode(a.astype(np.uint8), level=9), ic.png_decode)
-    e["webp8-lossless"] = ("q8", lambda a: ic.webp_encode(a.astype(np.uint8), lossless=True, method=6, level=100), None)
+    rgb = lambda a: np.repeat(a.astype(np.uint8)[:, :, None], 3, axis=2)
+    e["webp8-lossless"] = ("q8", lambda a: ic.webp_encode(rgb(a), lossless=True, method=6, level=100), None)
     for q in (90, 75):
-        e[f"webp8-lossy-q{q}"] = ("q8", (lambda q: lambda a: ic.webp_encode(np.repeat(a.astype(np.uint8)[:, :, None], 3, axis=2), level=q, method=6))(q),
+        e[f"webp8-lossy-q{q}"] = ("q8", (lambda q: lambda a: ic.webp_encode(rgb(a), level=q, lossless=False, method=6))(q),
                                   lambda b: ic.webp_decode(b)[:, :, 0])
     e["avif8-lossless"] = ("q8", lambda a: ic.avif_encode(a.astype(np.uint8), level=100, speed=6), None)
     e["jxl8-lossless"] = ("q8", lambda a: ic.jpegxl_encode(a.astype(np.uint8), lossless=True, effort=7), None)
+    # 12 bits spread over two channels, like Mapbox Terrain-RGB.
+    rg = lambda a: np.stack([(a.astype(np.uint16) >> 8).astype(np.uint8), (a.astype(np.uint16) & 255).astype(np.uint8), np.zeros(a.shape, np.uint8)], axis=2)
+    e["webp12-rg-lossless"] = ("q12", lambda a: ic.webp_encode(rg(a), lossless=True, method=6, level=100), None)
     e["png16"] = ("q12", lambda a: ic.png_encode(a.astype(np.uint16), level=9), None)
     for q in (90, 75, 60):
         e[f"avif12-lossy-q{q}"] = ("q12", (lambda q: lambda a: ic.avif_encode(a.astype(np.uint16), level=q, speed=6, bitspersample=12))(q),
@@ -73,6 +78,29 @@ def encoders():
     e["jxl12-lossless"] = ("q12", lambda a: ic.jpegxl_encode(a.astype(np.uint16), lossless=True, effort=7, bitspersample=12), None)
     e["jxl16-lossless"] = ("q16", lambda a: ic.jpegxl_encode(a.astype(np.uint16), lossless=True, effort=7), None)
     return e
+
+
+def bench_tile(job):
+    path, z, y, weight, names = job
+    encs = encoders()
+    with open(path, "rb") as fh:
+        counts = np.frombuffer(ic.zstd_decode(fh.read()), dtype="<u4").reshape(256, 256)
+    density = counts / row_areas(z, y)[:, None]
+    quantized = {s: log_quantize(density, MIN_DENSITY, spo, 2**bits - 1)
+                 for s, (bits, spo) in SCALES.items()}
+    nz = density > 0
+    res = {}
+    for name in names:
+        scale, enc, dec = encs[name]
+        data = enc(quantized[scale])
+        err, fl = None, None
+        if dec is not None:
+            got = dequantize(dec(data), MIN_DENSITY, SCALES[scale][1])
+            ok = nz & (got > 0)
+            err = np.abs(np.log2(got[ok] / density[ok]))
+            fl = (int((nz & (got == 0)).sum()), int((~nz & (got > 0)).sum()), int(nz.sum()))
+        res[name] = (len(data), err, fl)
+    return z, weight, res
 
 
 def main():
@@ -102,29 +130,21 @@ def main():
     tiles = defaultdict(float)
     errors = defaultdict(list)  # enc -> list of (abs log2 error) over nonzero pixels
     flips = defaultdict(lambda: [0, 0, 0])  # enc -> [nonzero->zero, zero->nonzero, nonzero]
+    jobs = []
     for z in sorted(per_zoom):
         n_all = len([f for f in files if f.startswith(f"{z}-")])
         weight = (1 if z <= 5 else args.rate) * n_all / len(per_zoom[z])
         for x, y, f in per_zoom[z]:
-            with open(os.path.join(args.sample_dir, f), "rb") as fh:
-                counts = np.frombuffer(ic.zstd_decode(fh.read()), dtype="<u4").reshape(256, 256)
-            density = counts / row_areas(z, y)[:, None]
+            jobs.append((os.path.join(args.sample_dir, f), z, y, weight, list(encs)))
+    with multiprocessing.Pool() as pool:
+        for z, weight, res in pool.imap_unordered(bench_tile, jobs, chunksize=4):
             tiles[z] += weight
-            quantized = {s: log_quantize(density, MIN_DENSITY, spo, 2**bits - 1)
-                         for s, (bits, spo) in SCALES.items()}
-            nz = density > 0
-            for name, (scale, enc, dec) in encs.items():
-                data = enc(quantized[scale])
-                sizes[name][z] += weight * len(data)
-                if dec is not None:
-                    got = dequantize(dec(data), MIN_DENSITY, SCALES[scale][1])
-                    ok = nz & (got > 0)
-                    errors[name].append(np.abs(np.log2(got[ok] / density[ok])))
-                    fl = flips[name]
-                    fl[0] += int((nz & (got == 0)).sum())
-                    fl[1] += int((~nz & (got > 0)).sum())
-                    fl[2] += int(nz.sum())
-        print(f"zoom {z}: {len(per_zoom[z])} sampled, ~{tiles[z]:.0f} tiles", file=sys.stderr)
+            for name, (size, err, fl) in res.items():
+                sizes[name][z] += weight * size
+                if err is not None:
+                    errors[name].append(err)
+                    for i in range(3):
+                        flips[name][i] += fl[i]
 
     print(f"{'encoding':22} {'total GB':>9} {'z10 GB':>8} {'B/tile':>7} {'median err':>10} {'p99 err':>8} {'lost px':>8} {'ghost px':>8}")
     ntiles = sum(tiles.values())
