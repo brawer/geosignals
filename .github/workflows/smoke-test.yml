@@ -44,6 +44,7 @@ jobs:
       run: |
         cargo run --locked --release -- node-density --smoke-test --output-dir out
         ls -l out/osm-node-density.*.tiff
+        cat out/osm-node-density.*.cdx.json
     - name: Check output with GDAL
       run: |
         sudo apt-get update -q

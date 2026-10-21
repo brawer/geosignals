@@ -47,6 +47,10 @@ enum Command {
         /// the pipeline works end to end without processing the planet.
         #[arg(long)]
         smoke_test: bool,
+        /// Identifies this run in its scheduler, such as a Kubernetes
+        /// job name; recorded in the data bill of materials.
+        #[arg(long, default_value = "")]
+        run_id: String,
     },
 }
 
@@ -61,13 +65,17 @@ fn main() -> Result<()> {
             sample_dir,
             sample_rate,
             smoke_test,
+            run_id,
         } => {
             let threads = threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
                     .map(|n| n.get())
                     .unwrap_or(1)
             });
+            let (reader, source) = open(&input)?;
             let cfg = osmsignals::node_density::Config {
+                input: osmsignals::bom::Input::new(&source),
+                run_id,
                 output_dir,
                 workdir,
                 threads,
@@ -76,7 +84,7 @@ fn main() -> Result<()> {
                 sample_rate,
                 max_blocks: smoke_test.then_some(5),
             };
-            let input = std::io::BufReader::with_capacity(1 << 20, open(&input)?);
+            let input = std::io::BufReader::with_capacity(1 << 20, reader);
             let summary = osmsignals::node_density::run(input, &cfg)?;
             eprintln!("{summary:#?}");
         }
@@ -84,15 +92,18 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn open(input: &str) -> Result<Box<dyn Read + Send>> {
+/// Opens the input, and returns it with where it actually comes from:
+/// for a URL, the one it redirected to.
+fn open(input: &str) -> Result<(Box<dyn Read + Send>, String)> {
     if input == "-" {
-        return Ok(Box::new(std::io::stdin()));
+        return Ok((Box::new(std::io::stdin()), input.into()));
     }
     if input.starts_with("https://") || input.starts_with("http://") {
         let reader = osmsignals::http::HttpReader::open(osmsignals::http::agent(), input)?;
         eprintln!("reading {}", reader.url());
-        return Ok(Box::new(reader));
+        let url = reader.url().to_string();
+        return Ok((Box::new(reader), url));
     }
     let f = std::fs::File::open(input).with_context(|| format!("opening {input}"))?;
-    Ok(Box::new(f))
+    Ok((Box::new(f), input.into()))
 }

@@ -8,9 +8,20 @@ mod common;
 use osmsignals::{encode, node_density, tile};
 use std::path::Path;
 
-fn run(pbf: &Path, run_size: usize) -> (node_density::Summary, common::Image) {
+/// Output of a run: its summary, the decoded image, the data BOM, and
+/// the SHA-256 of the image file.
+struct Output {
+    summary: node_density::Summary,
+    image: common::Image,
+    bom: serde_json::Value,
+    sha256: String,
+}
+
+fn run(pbf: &Path, run_size: usize) -> Output {
     let dir = tempfile::tempdir().unwrap();
     let cfg = node_density::Config {
+        input: osmsignals::bom::Input::new("zugerland.osm.pbf"),
+        run_id: "test-run".into(),
         output_dir: dir.path().to_path_buf(),
         workdir: dir.path().to_path_buf(),
         threads: 3,
@@ -21,8 +32,17 @@ fn run(pbf: &Path, run_size: usize) -> (node_density::Summary, common::Image) {
     };
     let input = std::fs::File::open(pbf).unwrap();
     let summary = node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
-    let image = common::read(&std::fs::read(&summary.output).unwrap());
-    (summary, image)
+    let tiff = std::fs::read(&summary.output).unwrap();
+    let image = common::read(&tiff);
+    let digest = ring::digest::digest(&ring::digest::SHA256, &tiff);
+    let sha256 = digest.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    let bom = serde_json::from_slice(&std::fs::read(&summary.bom).unwrap()).unwrap();
+    Output {
+        summary,
+        image,
+        bom,
+        sha256,
+    }
 }
 
 /// Sum of node counts implied by the pixels of a tile, up to quantization.
@@ -41,7 +61,12 @@ const ZUGERLAND: &str = "tests/data/zugerland.osm.pbf";
 
 #[test]
 fn zugerland() {
-    let (summary, image) = run(Path::new(ZUGERLAND), 1000);
+    let Output {
+        summary,
+        image,
+        bom,
+        sha256,
+    } = run(Path::new(ZUGERLAND), 1000);
     assert_eq!(summary.nodes, 1790);
     assert_eq!(summary.skipped_nodes, 0);
     assert_eq!(
@@ -49,6 +74,27 @@ fn zugerland() {
         "osm-node-density.2026-01-27.tiff",
         "named after the replication timestamp in the PBF header"
     );
+
+    // The data BOM sits next to the output and describes both files.
+    assert_eq!(
+        summary.bom,
+        summary
+            .output
+            .with_file_name("osm-node-density.2026-01-27.cdx.json")
+    );
+    assert_eq!(bom["specVersion"], "1.7");
+    assert_eq!(bom["metadata"]["timestamp"], "2026-01-27T08:11:02Z");
+    let output = &bom["metadata"]["component"];
+    assert_eq!(output["name"], "osm-node-density.2026-01-27.tiff");
+    assert_eq!(output["hashes"][0]["content"], sha256.as_str());
+    let input = &bom["components"][0];
+    assert_eq!(input["name"], "zugerland.osm.pbf");
+    assert!(input.get("hashes").is_none(), "input is not hashed");
+    assert_eq!(
+        bom["dependencies"][0]["dependsOn"][0], input["bom-ref"],
+        "output depends on input"
+    );
+    assert_eq!(bom["formulation"][0]["workflows"][0]["uid"], "test-run");
     assert_eq!(image.ifds.len(), 11, "full resolution plus 10 overviews");
     let full = &image.ifds[0];
     assert_eq!(full[&256].int(), 1 << 18, "one pixel per zoom-18 tile");
@@ -122,9 +168,13 @@ fn zugerland() {
 
 #[test]
 fn run_size_does_not_change_output() {
-    let (_, a) = run(Path::new(ZUGERLAND), 7);
-    let (_, b) = run(Path::new(ZUGERLAND), 1 << 20);
-    assert_eq!(a.tiles, b.tiles);
+    let (a, b) = (
+        run(Path::new(ZUGERLAND), 7),
+        run(Path::new(ZUGERLAND), 1 << 20),
+    );
+    assert_eq!(a.image.tiles, b.image.tiles);
+    assert_eq!(a.sha256, b.sha256);
+    assert_eq!(a.bom, b.bom, "data BOM is reproducible");
 }
 
 /// Kubernetes may restart a killed run with the same working directory.
@@ -144,6 +194,8 @@ fn restart_after_crash() {
     std::fs::write(work.join("planet.osm.pbf"), b"not ours").unwrap();
 
     let cfg = node_density::Config {
+        input: osmsignals::bom::Input::new("zugerland.osm.pbf"),
+        run_id: "test-run".into(),
         output_dir: dir.path().to_path_buf(),
         workdir: work.clone(),
         threads: 2,
@@ -174,7 +226,7 @@ fn smoke_test() {
         eprintln!("OSMSIGNALS_SMOKE_PBF not set, skipping");
         return;
     };
-    let (summary, image) = run(Path::new(&path), 1 << 20);
+    let Output { summary, image, .. } = run(Path::new(&path), 1 << 20);
     eprintln!("{summary:#?}");
     assert!(summary.nodes > 100_000, "suspiciously few nodes");
     // Vaduz castle should be denser than the Malbun ski slopes nearby.

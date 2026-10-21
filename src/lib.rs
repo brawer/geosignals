@@ -3,6 +3,7 @@
 
 //! Ranking signals for OpenStreetMap.
 
+pub mod bom;
 pub mod cog;
 pub mod encode;
 pub mod extsort;
