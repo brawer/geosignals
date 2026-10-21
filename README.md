@@ -44,6 +44,12 @@ The same planet and release give the same file, except for the
 optional `--run-id` (such as a Kubernetes job name), which is recorded
 as the workflow `uid`.
 
+Finally, `datapackage.json` is a [Frictionless Data Package
+v2](https://datapackage.org/standard/data-package/) descriptor that
+points to both dated files by relative path, with their sizes and
+SHA-256 hashes. Unlike them, it keeps its name and is replaced by
+each run, so clients can fetch it to find the current release.
+
 ### Container
 
 The [`Containerfile`](Containerfile) builds a ~3 MB image that holds

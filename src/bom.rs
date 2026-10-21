@@ -85,11 +85,10 @@ pub fn bom_path(output: &Path) -> PathBuf {
     output.with_extension("cdx.json")
 }
 
-/// Writes the BOM for a finished output file and returns its path.
-pub fn write(run: &Run) -> Result<PathBuf> {
-    let (sha256, sha512) =
-        hash_file(run.output).with_context(|| format!("hashing {}", run.output.display()))?;
-    let bom = build(run, &sha256, &sha512);
+/// Writes the BOM for a finished output file with the given hashes,
+/// and returns its path.
+pub fn write(run: &Run, output: &Hashes) -> Result<PathBuf> {
+    let bom = build(run, &output.sha256, &output.sha512);
     let path = bom_path(run.output);
     let mut text = serde_json::to_string_pretty(&bom)?;
     text.push('\n');
@@ -207,8 +206,17 @@ fn license() -> Value {
     json!([{"license": {"id": "ODbL-1.0", "url": ODBL_URL, "acknowledgement": "declared"}}])
 }
 
-fn hash_file(path: &Path) -> Result<(String, String)> {
-    let mut f = std::fs::File::open(path)?;
+/// Size and digests of a file, as lowercase hex.
+#[derive(Clone, Debug)]
+pub struct Hashes {
+    pub bytes: u64,
+    pub sha256: String,
+    pub sha512: String,
+}
+
+pub fn hash_file(path: &Path) -> Result<Hashes> {
+    let mut f = std::fs::File::open(path).with_context(|| format!("hashing {}", path.display()))?;
+    let mut bytes = 0;
     let mut sha256 = digest::Context::new(&digest::SHA256);
     let mut sha512 = digest::Context::new(&digest::SHA512);
     let mut buf = vec![0u8; 1 << 20];
@@ -219,8 +227,13 @@ fn hash_file(path: &Path) -> Result<(String, String)> {
         }
         sha256.update(&buf[..n]);
         sha512.update(&buf[..n]);
+        bytes += n as u64;
     }
-    Ok((hex(sha256.finish().as_ref()), hex(sha512.finish().as_ref())))
+    Ok(Hashes {
+        bytes,
+        sha256: hex(sha256.finish().as_ref()),
+        sha512: hex(sha512.finish().as_ref()),
+    })
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -232,7 +245,7 @@ fn serial_number(name: &str) -> String {
     uuid_v5(&SERIAL_NAMESPACE, name.as_bytes())
 }
 
-fn uuid_v5(namespace: &[u8; 16], name: &[u8]) -> String {
+pub(crate) fn uuid_v5(namespace: &[u8; 16], name: &[u8]) -> String {
     let mut ctx = digest::Context::new(&digest::SHA1_FOR_LEGACY_USE_ONLY);
     ctx.update(namespace);
     ctx.update(name);
@@ -252,7 +265,7 @@ fn uuid_v5(namespace: &[u8; 16], name: &[u8]) -> String {
 }
 
 /// RFC 3339 form of `timestamp`, in UTC.
-fn rfc3339(timestamp: i64) -> String {
+pub(crate) fn rfc3339(timestamp: i64) -> String {
     let (y, m, d) = crate::node_density::civil_date(timestamp.div_euclid(86_400));
     let s = timestamp.rem_euclid(86_400);
     format!(
@@ -291,6 +304,14 @@ mod tests {
             b"https://github.com/brawer/osmsignals#data-bom-serial",
         );
         assert_eq!(derived, "urn:uuid:3bfea3c0-a158-5dcd-8243-eebe86dedc1a");
+        assert_eq!(
+            uuid_v5(
+                &url_ns,
+                b"https://github.com/brawer/osmsignals#osm-node-density"
+            ),
+            "urn:uuid:2c7bffea-cc30-533e-ac1d-dc7b4aefd158",
+            "data package id of node-density"
+        );
         assert_eq!(
             derived.replace('-', "")["urn:uuid:".len()..],
             hex(&SERIAL_NAMESPACE)
