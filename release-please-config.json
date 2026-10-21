@@ -7,7 +7,6 @@
       "release-type": "rust",
       "package-name": "osmsignals",
       "include-component-in-tag": false,
-      "release-as": "0.1.0",
       "changelog-sections": [
         { "type": "feat", "section": "🆕 Enhancements" },
         { "type": "fix", "section": "🐞 Bug Fixes" },
