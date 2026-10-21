@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.0](https://github.com/brawer/osmsignals/compare/v0.1.0...v0.2.0) (2026-10-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* --output FILE is replaced by --output-dir DIR.
+
+### 🆕 Enhancements
+
+* add --workdir for temporary files ([#14](https://github.com/brawer/osmsignals/issues/14)) ([22989a2](https://github.com/brawer/osmsignals/commit/22989a2c10911f0cc5fe138c10d388acb690e5b8))
+* name output after the PBF replication timestamp ([#17](https://github.com/brawer/osmsignals/issues/17)) ([047bb10](https://github.com/brawer/osmsignals/commit/047bb10600cb81790d1ef1db4697514f2b57c941))
+* stream the latest planet over HTTPS by default ([#18](https://github.com/brawer/osmsignals/issues/18)) ([36f0be6](https://github.com/brawer/osmsignals/commit/36f0be6aeda34744364f7f7434efcd5066b11f28))
+* write a CycloneDX 1.7 data BOM next to the output ([#19](https://github.com/brawer/osmsignals/issues/19)) ([a112e97](https://github.com/brawer/osmsignals/commit/a112e97bc3e38e79e3b04591de00fa6175bc84b2))
+* write a Frictionless datapackage.json next to the output ([#20](https://github.com/brawer/osmsignals/issues/20)) ([631cf9d](https://github.com/brawer/osmsignals/commit/631cf9d4e37b2b12c8ed16bf2b8ee8b77d54705c))
+
+
+### 🚧 Maintenance
+
+* let release-please pick versions after 0.1.0 ([#16](https://github.com/brawer/osmsignals/issues/16)) ([62a7bd1](https://github.com/brawer/osmsignals/commit/62a7bd102db0f52f44d48c380c7b7fa31b6f2ce3))
+
 ## 0.1.0 (2026-10-20)
 
 
