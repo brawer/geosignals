@@ -15,6 +15,7 @@ fn run(pbf: &Path, run_size: usize) -> (node_density::Summary, common::Image) {
         workdir: dir.path().to_path_buf(),
         threads: 3,
         run_size,
+        max_blocks: None,
         sample_dir: None,
         sample_rate: 64,
     };
@@ -147,6 +148,7 @@ fn restart_after_crash() {
         workdir: work.clone(),
         threads: 2,
         run_size: 100,
+        max_blocks: None,
         sample_dir: None,
         sample_rate: 64,
     };

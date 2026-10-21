@@ -21,6 +21,8 @@ pub struct Config {
     /// Directory for temporary files; see [`crate::workdir`].
     pub workdir: PathBuf,
     pub threads: usize,
+    /// Stop reading after this many PBF data blocks, for smoke tests.
+    pub max_blocks: Option<usize>,
     pub run_size: usize,
     /// If set, raw counts of a sample of tiles are written here,
     /// for benchmarking image formats.
@@ -49,6 +51,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         threads: cfg.threads,
         run_size: cfg.run_size,
         tmpdir: workdir.tmp(),
+        max_blocks: cfg.max_blocks,
     };
     let (runs, stats) = pbf::sorted_runs(input, &opts)?;
     eprintln!(
