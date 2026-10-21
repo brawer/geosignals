@@ -3,5 +3,6 @@
 
 /target
 *.tif
+*.tiff
 *.osm.pbf
 !/tests/data/*.osm.pbf

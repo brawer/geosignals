@@ -20,11 +20,15 @@ Web Mercator tiles (~150 m at the equator), similar in spirit to
 ## Usage
 
 ```sh
-cargo run --release -- node-density --input planet.osm.pbf --output node-density.tif
+cargo run --release -- node-density --input planet.osm.pbf --output-dir .
 # or stream the planet without storing it:
 curl -s https://osm-pds.s3.amazonaws.com/2026/planet-261012.osm.pbf \
-  | cargo run --release -- node-density --input - --output node-density.tif
+  | cargo run --release -- node-density --input - --output-dir .
 ```
+
+The output is named after the replication timestamp in the PBF header,
+such as `osm-node-density.2026-10-12.tiff` (the date is in UTC). Input
+without that timestamp is rejected.
 
 ### Container
 
@@ -35,7 +39,7 @@ user into the container so the output belongs to you:
 ```sh
 podman build -t osmsignals .
 podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$PWD:/data" \
-  osmsignals node-density --input planet.osm.pbf --output node-density.tif
+  osmsignals node-density --input planet.osm.pbf --output-dir .
 ```
 
 Each release is also published as `ghcr.io/brawer/osmsignals` for

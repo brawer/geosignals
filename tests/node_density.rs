@@ -11,7 +11,7 @@ use std::path::Path;
 fn run(pbf: &Path, run_size: usize) -> (node_density::Summary, common::Image) {
     let dir = tempfile::tempdir().unwrap();
     let cfg = node_density::Config {
-        output: dir.path().join("out.tif"),
+        output_dir: dir.path().to_path_buf(),
         workdir: dir.path().to_path_buf(),
         threads: 3,
         run_size,
@@ -20,7 +20,7 @@ fn run(pbf: &Path, run_size: usize) -> (node_density::Summary, common::Image) {
     };
     let input = std::fs::File::open(pbf).unwrap();
     let summary = node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
-    let image = common::read(&std::fs::read(&cfg.output).unwrap());
+    let image = common::read(&std::fs::read(&summary.output).unwrap());
     (summary, image)
 }
 
@@ -43,6 +43,11 @@ fn zugerland() {
     let (summary, image) = run(Path::new(ZUGERLAND), 1000);
     assert_eq!(summary.nodes, 1790);
     assert_eq!(summary.skipped_nodes, 0);
+    assert_eq!(
+        summary.output.file_name().unwrap(),
+        "osm-node-density.2026-01-27.tiff",
+        "named after the replication timestamp in the PBF header"
+    );
     assert_eq!(image.ifds.len(), 11, "full resolution plus 10 overviews");
     let full = &image.ifds[0];
     assert_eq!(full[&256].int(), 1 << 18, "one pixel per zoom-18 tile");
@@ -127,17 +132,18 @@ fn run_size_does_not_change_output() {
 fn restart_after_crash() {
     let dir = tempfile::tempdir().unwrap();
     let work = dir.path().join("work");
-    let output = dir.path().join("out.tif");
+    let output = dir.path().join("osm-node-density.2026-01-27.tiff");
+    let partial = dir.path().join("osm-node-density.2026-01-27.tiff.partial");
     // What a run killed halfway through leaves behind.
     let stale = work.join("node-density/tmp");
     std::fs::create_dir_all(&stale).unwrap();
     std::fs::write(stale.join("spool-10"), vec![7u8; 1000]).unwrap();
     std::fs::write(stale.join(".tmpAbC123"), b"half a run").unwrap();
-    std::fs::write(dir.path().join("out.tif.partial"), b"half a file").unwrap();
+    std::fs::write(&partial, b"half a file").unwrap();
     std::fs::write(work.join("planet.osm.pbf"), b"not ours").unwrap();
 
     let cfg = node_density::Config {
-        output: output.clone(),
+        output_dir: dir.path().to_path_buf(),
         workdir: work.clone(),
         threads: 2,
         run_size: 100,
@@ -147,9 +153,10 @@ fn restart_after_crash() {
     let input = std::fs::File::open(ZUGERLAND).unwrap();
     let summary = node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
     assert_eq!(summary.nodes, 1790);
+    assert_eq!(summary.output, output);
     common::read(&std::fs::read(&output).unwrap());
 
-    assert!(!dir.path().join("out.tif.partial").exists());
+    assert!(!partial.exists());
     assert!(!stale.exists(), "temporary files left behind");
     assert_eq!(
         std::fs::read(work.join("planet.osm.pbf")).unwrap(),
