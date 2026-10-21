@@ -14,6 +14,17 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
+    name: "osm-node-density",
+    // UUIDv5(URL, "https://github.com/brawer/osmsignals#osm-node-density").
+    // Frozen: catalogs key on it.
+    id: "2c7bffea-cc30-533e-ac1d-dc7b4aefd158",
+    title: "OpenStreetMap node density",
+    description: "How many OpenStreetMap nodes there are per km² of Earth surface, \
+        for every zoom-18 Web Mercator tile, as a Cloud-Optimized GeoTIFF with \
+        overviews. Pixel values encode log2(nodes per km²); 0 means no nodes.",
+};
+
 pub struct Config {
     /// Where the input came from, for the data BOM.
     pub input: crate::bom::Input,
@@ -41,6 +52,8 @@ pub struct Summary {
     pub output: PathBuf,
     /// Its data bill of materials; see [`crate::bom`].
     pub bom: PathBuf,
+    /// The data package pointing to both; see [`crate::datapackage`].
+    pub datapackage: PathBuf,
     pub nodes: u64,
     pub skipped_nodes: u64,
     pub pixels: u64,
@@ -169,17 +182,33 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         gdal_metadata: gdal_metadata(stats.nodes, &hist),
     };
     spool.write_cog(&output, &meta)?;
-    summary.bom = crate::bom::write(&crate::bom::Run {
-        input: &cfg.input,
-        timestamp: stats.timestamp,
-        output: &output,
-        description: "OpenStreetMap node density",
-        run_id: &cfg.run_id,
-    })?;
+    let hashes = crate::bom::hash_file(&output)?;
+    summary.bom = crate::bom::write(
+        &crate::bom::Run {
+            input: &cfg.input,
+            timestamp: stats.timestamp,
+            output: &output,
+            description: "OpenStreetMap node density",
+            run_id: &cfg.run_id,
+        },
+        &hashes,
+    )?;
+    // Written last, so it never points to files that are not there yet.
+    summary.datapackage = crate::datapackage::write(
+        &PACKAGE,
+        &crate::datapackage::Files {
+            input: &cfg.input,
+            timestamp: stats.timestamp,
+            tiff: &output,
+            tiff_hashes: &hashes,
+            bom: &summary.bom,
+        },
+    )?;
     eprintln!(
-        "wrote {} and {} in {:.0?}",
+        "wrote {}, {} and {} in {:.0?}",
         output.display(),
         summary.bom.display(),
+        summary.datapackage.display(),
         start.elapsed()
     );
     Ok(summary)

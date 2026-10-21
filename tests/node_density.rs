@@ -14,7 +14,9 @@ struct Output {
     summary: node_density::Summary,
     image: common::Image,
     bom: serde_json::Value,
+    datapackage: serde_json::Value,
     sha256: String,
+    bom_bytes: usize,
 }
 
 fn run(pbf: &Path, run_size: usize) -> Output {
@@ -36,12 +38,17 @@ fn run(pbf: &Path, run_size: usize) -> Output {
     let image = common::read(&tiff);
     let digest = ring::digest::digest(&ring::digest::SHA256, &tiff);
     let sha256 = digest.as_ref().iter().map(|b| format!("{b:02x}")).collect();
-    let bom = serde_json::from_slice(&std::fs::read(&summary.bom).unwrap()).unwrap();
+    let bom_json = std::fs::read(&summary.bom).unwrap();
+    let bom = serde_json::from_slice(&bom_json).unwrap();
+    let datapackage =
+        serde_json::from_slice(&std::fs::read(&summary.datapackage).unwrap()).unwrap();
     Output {
         summary,
         image,
         bom,
+        datapackage,
         sha256,
+        bom_bytes: bom_json.len(),
     }
 }
 
@@ -65,7 +72,9 @@ fn zugerland() {
         summary,
         image,
         bom,
+        datapackage,
         sha256,
+        bom_bytes,
     } = run(Path::new(ZUGERLAND), 1000);
     assert_eq!(summary.nodes, 1790);
     assert_eq!(summary.skipped_nodes, 0);
@@ -95,6 +104,18 @@ fn zugerland() {
         "output depends on input"
     );
     assert_eq!(bom["formulation"][0]["workflows"][0]["uid"], "test-run");
+
+    // The data package points to both files, by name relative to itself.
+    assert_eq!(
+        summary.datapackage,
+        summary.output.with_file_name("datapackage.json")
+    );
+    assert_eq!(datapackage["version"], "2026-01-27");
+    let resources = datapackage["resources"].as_array().unwrap();
+    assert_eq!(resources[0]["path"], "osm-node-density.2026-01-27.tiff");
+    assert_eq!(resources[0]["hash"], format!("sha256:{sha256}"));
+    assert_eq!(resources[1]["path"], "osm-node-density.2026-01-27.cdx.json");
+    assert_eq!(resources[1]["bytes"], bom_bytes, "BOM size");
     assert_eq!(image.ifds.len(), 11, "full resolution plus 10 overviews");
     let full = &image.ifds[0];
     assert_eq!(full[&256].int(), 1 << 18, "one pixel per zoom-18 tile");
@@ -175,6 +196,7 @@ fn run_size_does_not_change_output() {
     assert_eq!(a.image.tiles, b.image.tiles);
     assert_eq!(a.sha256, b.sha256);
     assert_eq!(a.bom, b.bom, "data BOM is reproducible");
+    assert_eq!(a.datapackage, b.datapackage, "data package is reproducible");
 }
 
 /// Kubernetes may restart a killed run with the same working directory.

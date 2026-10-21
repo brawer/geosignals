@@ -52,3 +52,8 @@ jobs:
         gdalinfo out/osm-node-density.*.tiff
         /usr/bin/python3 -W ignore -m osgeo_utils.samples.validate_cloud_optimized_geotiff \
           --full-check=yes out/osm-node-density.*.tiff
+    - name: Check data package with Frictionless
+      run: |
+        python3 -m venv "$RUNNER_TEMP/venv"
+        "$RUNNER_TEMP/venv/bin/pip" install --quiet frictionless==5.21.0
+        cd out && "$RUNNER_TEMP/venv/bin/frictionless" validate datapackage.json

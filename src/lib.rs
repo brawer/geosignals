@@ -5,6 +5,7 @@
 
 pub mod bom;
 pub mod cog;
+pub mod datapackage;
 pub mod encode;
 pub mod extsort;
 pub mod histogram;
