@@ -15,6 +15,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub struct Config {
+    /// Where the input came from, for the data BOM.
+    pub input: crate::bom::Input,
+    /// Identifies this run in its scheduler, for the data BOM.
+    pub run_id: String,
     /// Directory for the output, which is named after the date of the
     /// input data; see [`output_name`].
     pub output_dir: PathBuf,
@@ -35,6 +39,8 @@ pub struct Config {
 pub struct Summary {
     /// The GeoTIFF file that was written.
     pub output: PathBuf,
+    /// Its data bill of materials; see [`crate::bom`].
+    pub bom: PathBuf,
     pub nodes: u64,
     pub skipped_nodes: u64,
     pub pixels: u64,
@@ -145,13 +151,14 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
     hist.add_value(0, empty_tiles * (TILE_SIZE * TILE_SIZE) as u64);
 
     let output = cfg.output_dir.join(output_name(stats.timestamp)?);
-    let summary = Summary {
+    let mut summary = Summary {
         output: output.clone(),
         nodes: stats.nodes,
         skipped_nodes: stats.skipped,
         pixels,
         tiles_per_zoom: spool.tiles_per_zoom.clone(),
         bytes_per_zoom: spool.bytes_per_zoom.clone(),
+        ..Summary::default()
     };
     let meta = Metadata {
         description: "OpenStreetMap node density".into(),
@@ -162,7 +169,19 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         gdal_metadata: gdal_metadata(stats.nodes, &hist),
     };
     spool.write_cog(&output, &meta)?;
-    eprintln!("wrote {} in {:.0?}", output.display(), start.elapsed());
+    summary.bom = crate::bom::write(&crate::bom::Run {
+        input: &cfg.input,
+        timestamp: stats.timestamp,
+        output: &output,
+        description: "OpenStreetMap node density",
+        run_id: &cfg.run_id,
+    })?;
+    eprintln!(
+        "wrote {} and {} in {:.0?}",
+        output.display(),
+        summary.bom.display(),
+        start.elapsed()
+    );
     Ok(summary)
 }
 
@@ -179,7 +198,7 @@ pub fn output_name(timestamp: i64) -> Result<String> {
 
 /// Year, month and day of a day number counted from 1970-01-01, after
 /// Howard Hinnant's `civil_from_days`.
-fn civil_date(days: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_date(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);

@@ -35,6 +35,15 @@ The output is named after the replication timestamp in the PBF header,
 such as `osm-node-density.2026-10-12.tiff` (the date is in UTC). Input
 without that timestamp is rejected.
 
+Next to it, `osm-node-density.2026-10-12.cdx.json` is a data bill of
+materials in [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/)
+format. It records the osmsignals version, the planet it read (by name,
+replication timestamp and download URL, but without a hash since the
+planet is only partly read), and the SHA-256 and SHA-512 of the GeoTIFF.
+The same planet and release give the same file, except for the
+optional `--run-id` (such as a Kubernetes job name), which is recorded
+as the workflow `uid`.
+
 ### Container
 
 The [`Containerfile`](Containerfile) builds a ~3 MB image that holds
