@@ -7,6 +7,7 @@ pub mod cog;
 pub mod encode;
 pub mod extsort;
 pub mod histogram;
+pub mod http;
 pub mod node_density;
 pub mod pbf;
 pub mod pyramid;

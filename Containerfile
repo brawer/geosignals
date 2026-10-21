@@ -7,7 +7,7 @@
 #   podman build -t osmsignals .
 #   podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" \
 #       -v "$PWD:/data" osmsignals \
-#       node-density --input planet.osm.pbf --output-dir .
+#       node-density --output-dir .
 #
 # Releases are built and attested by .github/workflows/release-build.yml.
 # The build is meant to be reproducible, so that anyone can rebuild a
@@ -17,8 +17,8 @@
 # crates.io, and build paths are stripped from the binary.
 
 # Alpine's Rust is native musl, which links statically by default; the
-# image already ships gcc and musl-dev for the C parts of zstd. Building
-# natively for the target platform keeps multi-arch builds
+# image already ships gcc and musl-dev for the C parts of zstd and ring.
+# Building natively for the target platform keeps multi-arch builds
 # (podman build --platform linux/amd64,linux/arm64) free of cross-compilers.
 FROM docker.io/library/rust:1.99-alpine@sha256:557a94c82b485a14b569120e00867267108c734efe33f10cc31ca0cd5dd1eca9 AS build
 

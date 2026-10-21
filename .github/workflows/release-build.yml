@@ -98,6 +98,13 @@ jobs:
           osmsignals node-density \
           --input zugerland.osm.pbf --output-dir .
         test -s "$RUNNER_TEMP/data/osm-node-density.2026-01-27.tiff"
+        # Reads the first blocks of the latest planet over HTTPS,
+        # which checks that TLS works in the otherwise empty image.
+        podman run --rm \
+          --userns=keep-id --user "$(id -u):$(id -g)" \
+          --volume "$RUNNER_TEMP/data:/data" \
+          osmsignals node-density --smoke-test --output-dir planet
+        ls -l "$RUNNER_TEMP"/data/planet/osm-node-density.*.tiff
     - name: Push image
       env:
         TAG: ${{ github.ref_name }}

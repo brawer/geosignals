@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -16,9 +17,11 @@ struct Cli {
 enum Command {
     /// Computes OSM node density as a Cloud-Optimized GeoTIFF.
     NodeDensity {
-        /// OSM PBF file to read, or "-" for standard input.
-        #[arg(long)]
-        input: PathBuf,
+        /// OSM PBF to read: a file, an http(s) URL, or "-" for standard
+        /// input. Defaults to the most recent weekly planet dump, which
+        /// is streamed over HTTPS without storing it.
+        #[arg(long, default_value = osmsignals::http::PLANET_URL)]
+        input: String,
         /// Directory for the GeoTIFF, which gets named after the date of
         /// the input data, such as osm-node-density.2026-10-19.tiff.
         #[arg(long)]
@@ -40,6 +43,10 @@ enum Command {
         /// Sample one in this many tiles at zoom 6 and deeper.
         #[arg(long, default_value_t = 64)]
         sample_rate: u64,
+        /// Read only the first few blocks of the input, to check that
+        /// the pipeline works end to end without processing the planet.
+        #[arg(long)]
+        smoke_test: bool,
     },
 }
 
@@ -53,6 +60,7 @@ fn main() -> Result<()> {
             run_size,
             sample_dir,
             sample_rate,
+            smoke_test,
         } => {
             let threads = threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
@@ -66,19 +74,25 @@ fn main() -> Result<()> {
                 run_size,
                 sample_dir,
                 sample_rate,
+                max_blocks: smoke_test.then_some(5),
             };
-            let summary = if input.as_os_str() == "-" {
-                osmsignals::node_density::run(
-                    std::io::BufReader::with_capacity(1 << 20, std::io::stdin()),
-                    &cfg,
-                )?
-            } else {
-                let f = std::fs::File::open(&input)
-                    .with_context(|| format!("opening {}", input.display()))?;
-                osmsignals::node_density::run(std::io::BufReader::with_capacity(1 << 20, f), &cfg)?
-            };
+            let input = std::io::BufReader::with_capacity(1 << 20, open(&input)?);
+            let summary = osmsignals::node_density::run(input, &cfg)?;
             eprintln!("{summary:#?}");
         }
     }
     Ok(())
+}
+
+fn open(input: &str) -> Result<Box<dyn Read + Send>> {
+    if input == "-" {
+        return Ok(Box::new(std::io::stdin()));
+    }
+    if input.starts_with("https://") || input.starts_with("http://") {
+        let reader = osmsignals::http::HttpReader::open(osmsignals::http::agent(), input)?;
+        eprintln!("reading {}", reader.url());
+        return Ok(Box::new(reader));
+    }
+    let f = std::fs::File::open(input).with_context(|| format!("opening {input}"))?;
+    Ok(Box::new(f))
 }

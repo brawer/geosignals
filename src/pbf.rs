@@ -30,6 +30,8 @@ pub struct Options<'a> {
     /// Number of keys each worker buffers before spilling a sorted run.
     pub run_size: usize,
     pub tmpdir: &'a Path,
+    /// Stop after this many data blocks, for smoke tests.
+    pub max_blocks: Option<usize>,
 }
 
 /// Reads all nodes from `input` and returns sorted runs of their keys.
@@ -92,6 +94,7 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Vec<Run>
         let mut sorted_by_type = false;
         let mut seen_header = false;
         let mut timestamp = None;
+        let mut blocks = 0;
         let read_result = (|| -> Result<()> {
             for blob in BlobReader::new(input) {
                 let blob = blob.context("reading PBF blob")?;
@@ -120,6 +123,10 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Vec<Run>
                         if sorted_by_type && done.load(Ordering::Relaxed) {
                             break;
                         }
+                        if opts.max_blocks.is_some_and(|max| blocks >= max) {
+                            break;
+                        }
+                        blocks += 1;
                         if tx.send(blob).is_err() {
                             break; // A worker failed; its error is reported below.
                         }

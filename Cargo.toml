@@ -16,6 +16,7 @@ crossbeam-channel = "0.5.17"
 fast_hilbert = "2.1.0"
 osmpbf = "0.3.8"
 tempfile = "3.27.0"
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 zstd = "0.14.3"
 
 [dev-dependencies]
