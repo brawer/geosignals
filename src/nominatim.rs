@@ -323,7 +323,7 @@ fn unhex(hex: &[u8], out: &mut Vec<u8>) -> Result<()> {
             _ => bail!("not a hex digit: {:?}", c as char),
         })
     };
-    for pair in hex.chunks_exact(2) {
+    for pair in hex.as_chunks::<2>().0 {
         out.push(digit(pair[0])? << 4 | digit(pair[1])?);
     }
     Ok(())
@@ -382,7 +382,7 @@ fn paint_wkb(b: &[u8], raster: &mut Raster) -> Result<()> {
         "raster at {left}, {top} extends beyond the grid"
     );
     let (col, row) = (col as u32, row as u32);
-    for (i, px) in pixels.chunks_exact(2).enumerate() {
+    for (i, px) in pixels.as_chunks::<2>().0.iter().enumerate() {
         let v = u16::from_le_bytes([px[0], px[1]]);
         if v == 0 || Some(v) == nodata {
             continue;
