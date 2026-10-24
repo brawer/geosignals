@@ -3,8 +3,9 @@
 
 name: Smoke test
 
-# Runs the pipeline on a real country extract from Geofabrik. Kept out of
-# PR checks because it depends on an external download; it runs for
+# Runs the pipeline on a real country extract from Geofabrik, and
+# republishes Nominatim's raster. Kept out of PR checks because it
+# depends on external downloads; it runs for
 # release tags, and can be started by hand from the Actions tab.
 on:
   push:
@@ -52,8 +53,19 @@ jobs:
         gdalinfo out/osm-node-density.*.tiff
         /usr/bin/python3 -W ignore -m osgeo_utils.samples.validate_cloud_optimized_geotiff \
           --full-check=yes out/osm-node-density.*.tiff
-    - name: Check data package with Frictionless
+    - name: Republish Nominatim's secondary importance
+      run: |
+        cargo run --locked --release -- nominatim-secondary-importance --output-dir nominatim
+        ls -l nominatim/nominatim-secondary-importance.*.tiff
+        cat nominatim/nominatim-secondary-importance.*.cdx.json
+    - name: Check Nominatim output with GDAL
+      run: |
+        gdalinfo nominatim/nominatim-secondary-importance.*.tiff | grep -v '<Row'
+        /usr/bin/python3 -W ignore -m osgeo_utils.samples.validate_cloud_optimized_geotiff \
+          --full-check=yes nominatim/nominatim-secondary-importance.*.tiff
+    - name: Check data packages with Frictionless
       run: |
         python3 -m venv "$RUNNER_TEMP/venv"
         "$RUNNER_TEMP/venv/bin/pip" install --quiet frictionless==5.21.0
-        cd out && "$RUNNER_TEMP/venv/bin/frictionless" validate datapackage.json
+        (cd out && "$RUNNER_TEMP/venv/bin/frictionless" validate datapackage.json)
+        (cd nominatim && "$RUNNER_TEMP/venv/bin/frictionless" validate datapackage.json)

@@ -3,7 +3,7 @@
 
 //! The `node-density` pipeline: PBF → sorted keys → pyramid → GeoTIFF.
 
-use crate::cog::{Metadata, Spool};
+use crate::cog::{Grid, Metadata, Spool};
 use crate::histogram::Histogram;
 use crate::tile::{MAX_TILE_ZOOM, TILE_SIZE};
 use crate::workdir::Workdir;
@@ -81,7 +81,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         start.elapsed()
     );
 
-    let mut spool = Spool::new(workdir.tmp())?;
+    let mut spool = Spool::new(workdir.tmp(), Grid::WEB_MERCATOR)?;
     let mut pixels = 0u64;
     let mut hist = Histogram::default();
     if let Some(dir) = &cfg.sample_dir {
@@ -180,6 +180,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         min_value: hist.range().0,
         max_value: hist.range().1,
         gdal_metadata: gdal_metadata(stats.nodes, &hist),
+        nodata: None,
     };
     spool.write_cog(&output, &meta)?;
     let hashes = crate::bom::hash_file(&output)?;
@@ -217,26 +218,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
 /// File name for data as of `timestamp` (seconds since the Unix epoch),
 /// such as `osm-node-density.2026-10-19.tiff`. The date is in UTC.
 pub fn output_name(timestamp: i64) -> Result<String> {
-    let (y, m, d) = civil_date(timestamp.div_euclid(86_400));
-    anyhow::ensure!(
-        (1970..=9999).contains(&y),
-        "implausible timestamp {timestamp}"
-    );
-    Ok(format!("osm-node-density.{y:04}-{m:02}-{d:02}.tiff"))
-}
-
-/// Year, month and day of a day number counted from 1970-01-01, after
-/// Howard Hinnant's `civil_from_days`.
-pub(crate) fn civil_date(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (yoe + era * 400 + i64::from(m <= 2), m, d)
+    crate::date::dated_name(PACKAGE.name, timestamp)
 }
 
 fn write_sample(dir: &Path, z: u8, x: u32, y: u32, counts: &pyramid::Counts) -> Result<()> {

@@ -19,14 +19,20 @@ pub struct Histogram {
 }
 
 impl Default for Histogram {
+    /// A histogram for node density, whose values go up to 4095.
     fn default() -> Self {
-        Histogram {
-            counts: vec![0; MAX_VALUE as usize + 1],
-        }
+        Histogram::new(MAX_VALUE)
     }
 }
 
 impl Histogram {
+    /// A histogram for values from 0 to `max_value`.
+    pub fn new(max_value: u16) -> Self {
+        Histogram {
+            counts: vec![0; max_value as usize + 1],
+        }
+    }
+
     pub fn add(&mut self, pixels: &[u16]) {
         for &v in pixels {
             self.counts[v as usize] += 1;
@@ -69,15 +75,7 @@ impl Histogram {
         let mut b = String::with_capacity(64 * (n + 4));
         b.push_str(r#"<Item name="DEFAULT_RASTER_ATTRIBUTE_TABLE" sample="0" role="rat">"#);
         b.push_str(r#"<GDALRasterAttributeTable Row0Min="0" BinSize="1" tableType="athematic">"#);
-        b.push_str(
-            r#"<FieldDefn index="0"><Name>min</Name><Type>1</Type><Usage>3</Usage></FieldDefn>"#,
-        );
-        b.push_str(
-            r#"<FieldDefn index="1"><Name>max</Name><Type>1</Type><Usage>4</Usage></FieldDefn>"#,
-        );
-        b.push_str(
-            r#"<FieldDefn index="2"><Name>count</Name><Type>1</Type><Usage>1</Usage></FieldDefn>"#,
-        );
+        push_fields(&mut b);
         for (i, c) in self.counts[..n].iter().enumerate() {
             write!(
                 b,
@@ -89,6 +87,46 @@ impl Histogram {
         b.push_str("</GDALRasterAttributeTable></Item>");
         b
     }
+
+    /// Like [`Histogram::rat_xml`], but with rows only for the values
+    /// that occur, plus value 0. Without linear binning, readers find a
+    /// value's row by its min and max columns. This is for 16-bit data
+    /// with few distinct values, where one row per value up to the
+    /// largest would take megabytes.
+    pub fn sparse_rat_xml(&self) -> String {
+        use std::fmt::Write;
+        let rows = self
+            .counts
+            .iter()
+            .enumerate()
+            .filter(|&(v, &c)| v == 0 || c > 0);
+        let mut b = String::new();
+        b.push_str(r#"<Item name="DEFAULT_RASTER_ATTRIBUTE_TABLE" sample="0" role="rat">"#);
+        b.push_str(r#"<GDALRasterAttributeTable tableType="athematic">"#);
+        push_fields(&mut b);
+        for (i, (v, c)) in rows.enumerate() {
+            write!(
+                b,
+                r#"<Row index="{i}"><F>{v}</F><F>{}</F><F>{c}</F></Row>"#,
+                v + 1
+            )
+            .unwrap();
+        }
+        b.push_str("</GDALRasterAttributeTable></Item>");
+        b
+    }
+}
+
+fn push_fields(b: &mut String) {
+    b.push_str(
+        r#"<FieldDefn index="0"><Name>min</Name><Type>1</Type><Usage>3</Usage></FieldDefn>"#,
+    );
+    b.push_str(
+        r#"<FieldDefn index="1"><Name>max</Name><Type>1</Type><Usage>4</Usage></FieldDefn>"#,
+    );
+    b.push_str(
+        r#"<FieldDefn index="2"><Name>count</Name><Type>1</Type><Usage>1</Usage></FieldDefn>"#,
+    );
 }
 
 #[cfg(test)]
@@ -125,6 +163,19 @@ mod tests {
         assert!(xml.contains(r#"<Row index="2"><F>2</F><F>3</F><F>2</F></Row>"#));
         assert!(!xml.contains(r#"<Row index="3">"#));
         assert!(xml.ends_with("</Item>"));
+    }
+
+    #[test]
+    fn sparse_rat_xml_skips_missing_values() {
+        let mut h = Histogram::new(u16::MAX);
+        h.add(&[65535, 3, 3, 0]);
+        let xml = h.sparse_rat_xml();
+        assert!(!xml.contains("Row0Min"));
+        assert!(xml.contains(r#"<Row index="0"><F>0</F><F>1</F><F>1</F></Row>"#));
+        assert!(xml.contains(r#"<Row index="1"><F>3</F><F>4</F><F>2</F></Row>"#));
+        assert!(xml.contains(r#"<Row index="2"><F>65535</F><F>65536</F><F>1</F></Row>"#));
+        assert!(!xml.contains(r#"<Row index="3">"#));
+        assert_eq!(h.range(), (0, 65535));
     }
 
     #[test]

@@ -67,10 +67,10 @@ pub fn write(pkg: &Package, files: &Files) -> Result<PathBuf> {
 }
 
 fn build(pkg: &Package, files: &Files, bom_hashes: &Hashes) -> Value {
-    let created = bom::rfc3339(files.timestamp);
+    let created = crate::date::rfc3339(files.timestamp);
     let date = &created[..10];
     let mut source = json!({
-        "title": format!("OpenStreetMap {}", files.input.name),
+        "title": format!("{} {}", files.input.supplier.title, files.input.name),
         "version": created,
     });
     if let Some(url) = &files.input.url {
@@ -106,7 +106,10 @@ fn build(pkg: &Package, files: &Files, bom_hashes: &Hashes) -> Value {
                 &format!("{}-bom", pkg.name),
                 files.bom,
                 "Data bill of materials (CycloneDX 1.7)",
-                "Which osmsignals release made the GeoTIFF, from which planet.",
+                &format!(
+                    "Which osmsignals release made the GeoTIFF, from which {}.",
+                    files.input.supplier.noun
+                ),
                 "json",
                 CYCLONEDX_MEDIA_TYPE,
                 bom_hashes,

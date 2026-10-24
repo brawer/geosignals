@@ -6,9 +6,10 @@
 //! next to the output, with the same name and `.cdx.json` instead of
 //! `.tiff`.
 //!
-//! The input is streamed and only partly read, so we cannot hash it;
+//! The planet is streamed and only partly read, so we cannot hash it;
 //! its component identifies it by name, replication timestamp and URL
-//! instead. Every timestamp comes from the input, not the clock, and
+//! instead. Smaller inputs that are read whole, such as Nominatim's
+//! raster, are hashed too. Every timestamp comes from the input, not the clock, and
 //! the serial number is derived from the output's hash, so rebuilding
 //! from the same planet with the same release gives the same document.
 
@@ -33,13 +34,46 @@ const SERIAL_NAMESPACE: [u8; 16] = [
     0x3b, 0xfe, 0xa3, 0xc0, 0xa1, 0x58, 0x5d, 0xcd, 0x82, 0x43, 0xee, 0xbe, 0x86, 0xde, 0xdc, 0x1a,
 ];
 
+/// Who publishes an input.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Supplier {
+    pub name: &'static str,
+    pub url: &'static str,
+    /// Namespace of the input's package URL, as in
+    /// `pkg:generic/openstreetmap/planet@…`.
+    pub purl_namespace: &'static str,
+    /// What to call its data in titles, as in "OpenStreetMap planet-261012.osm.pbf".
+    pub title: &'static str,
+    /// What to call one input in descriptions.
+    pub noun: &'static str,
+}
+
+pub const OSM: Supplier = Supplier {
+    name: "OpenStreetMap Foundation",
+    url: "https://osmfoundation.org/",
+    purl_namespace: "openstreetmap",
+    title: "OpenStreetMap",
+    noun: "planet",
+};
+
+pub const NOMINATIM: Supplier = Supplier {
+    name: "Nominatim",
+    url: "https://nominatim.org/",
+    purl_namespace: "nominatim",
+    title: "Nominatim",
+    noun: "Nominatim file",
+};
+
 /// Where the input came from.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Input {
     /// File name, such as `planet-261012.osm.pbf`.
     pub name: String,
     /// Where it was downloaded from, after redirects.
     pub url: Option<String>,
+    pub supplier: &'static Supplier,
+    /// Digests of the whole input, if it was read completely.
+    pub hashes: Option<Hashes>,
 }
 
 impl Input {
@@ -52,19 +86,33 @@ impl Input {
             return Input {
                 name: name.to_string(),
                 url: Some(input.to_string()),
+                supplier: &OSM,
+                hashes: None,
             };
         }
         if input == "-" {
             return Input {
                 name: "stdin".into(),
                 url: None,
+                supplier: &OSM,
+                hashes: None,
             };
         }
         let name = Path::new(input)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "stdin".into());
-        Input { name, url: None }
+        Input {
+            name,
+            url: None,
+            supplier: &OSM,
+            hashes: None,
+        }
+    }
+
+    /// The same input, published by `supplier`.
+    pub fn from(self, supplier: &'static Supplier) -> Input {
+        Input { supplier, ..self }
     }
 }
 
@@ -100,7 +148,7 @@ pub fn write(run: &Run, output: &Hashes) -> Result<PathBuf> {
 
 fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
     let version = env!("CARGO_PKG_VERSION");
-    let anchor = rfc3339(run.timestamp);
+    let anchor = crate::date::rfc3339(run.timestamp);
     let output_name = run
         .output
         .file_name()
@@ -109,18 +157,41 @@ fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
     let input_ref = run.input.name.clone();
 
     // Planet dumps share one package name, whatever their file name.
-    let package = if run.input.name.starts_with("planet-") {
+    let source = run.input.supplier;
+    let package = if *source == OSM && run.input.name.starts_with("planet-") {
         "planet"
     } else {
         run.input.name.as_str()
     };
-    let mut purl = format!("pkg:generic/openstreetmap/{package}@{anchor}");
+    let mut purl = format!("pkg:generic/{}/{package}@{anchor}", source.purl_namespace);
     let mut input_refs = vec![json!({"type": "license", "url": ODBL_URL})];
     let mut input_data = json!({"type": "dataset"});
     if let Some(url) = &run.input.url {
         purl.push_str(&format!("?download_url={url}"));
         input_refs.insert(0, json!({"type": "distribution", "url": url}));
         input_data["contents"] = json!({"url": url});
+    }
+
+    let mut input = json!({
+        "bom-ref": input_ref,
+        "type": "data",
+        "name": run.input.name,
+        "version": anchor,
+        "supplier": {
+            "name": source.name,
+            "url": [source.url],
+        },
+        "licenses": license(),
+        "copyright": OSM_COPYRIGHT,
+        "purl": purl,
+        "data": [input_data],
+        "externalReferences": input_refs,
+    });
+    if let Some(h) = &run.input.hashes {
+        input["hashes"] = json!([
+            {"alg": "SHA-256", "content": h.sha256},
+            {"alg": "SHA-512", "content": h.sha512},
+        ]);
     }
 
     json!({
@@ -165,21 +236,7 @@ fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
                 ],
             },
         },
-        "components": [{
-            "bom-ref": input_ref,
-            "type": "data",
-            "name": run.input.name,
-            "version": anchor,
-            "supplier": {
-                "name": "OpenStreetMap Foundation",
-                "url": ["https://osmfoundation.org/"],
-            },
-            "licenses": license(),
-            "copyright": OSM_COPYRIGHT,
-            "purl": purl,
-            "data": [input_data],
-            "externalReferences": input_refs,
-        }],
+        "components": [input],
         "dependencies": [{"ref": output_name, "dependsOn": [input_ref]}],
         "formulation": [{
             "bom-ref": "formula-osmsignals",
@@ -236,6 +293,15 @@ pub fn hash_file(path: &Path) -> Result<Hashes> {
     })
 }
 
+/// Size and digests of data in memory.
+pub fn hash_bytes(data: &[u8]) -> Hashes {
+    Hashes {
+        bytes: data.len() as u64,
+        sha256: hex(digest::digest(&digest::SHA256, data).as_ref()),
+        sha512: hex(digest::digest(&digest::SHA512, data).as_ref()),
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -261,18 +327,6 @@ pub(crate) fn uuid_v5(namespace: &[u8; 16], name: &[u8]) -> String {
         &h[12..16],
         &h[16..20],
         &h[20..32]
-    )
-}
-
-/// RFC 3339 form of `timestamp`, in UTC.
-pub(crate) fn rfc3339(timestamp: i64) -> String {
-    let (y, m, d) = crate::node_density::civil_date(timestamp.div_euclid(86_400));
-    let s = timestamp.rem_euclid(86_400);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        s / 3600,
-        s / 60 % 60,
-        s % 60
     )
 }
 
@@ -316,12 +370,6 @@ mod tests {
             derived.replace('-', "")["urn:uuid:".len()..],
             hex(&SERIAL_NAMESPACE)
         );
-    }
-
-    #[test]
-    fn timestamps() {
-        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339(1_769_501_462), "2026-01-27T08:11:02Z");
     }
 
     #[test]

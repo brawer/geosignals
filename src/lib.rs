@@ -6,11 +6,13 @@
 pub mod bom;
 pub mod cog;
 pub mod datapackage;
+pub mod date;
 pub mod encode;
 pub mod extsort;
 pub mod histogram;
 pub mod http;
 pub mod node_density;
+pub mod nominatim;
 pub mod pbf;
 pub mod pyramid;
 pub mod tile;

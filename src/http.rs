@@ -49,6 +49,7 @@ pub struct HttpReader {
     /// Final URL after redirects.
     url: String,
     etag: Option<String>,
+    last_modified: Option<String>,
     len: Option<u64>,
     pos: u64,
     body: Option<ureq::BodyReader<'static>>,
@@ -72,6 +73,7 @@ impl HttpReader {
                 .map(str::to_owned)
         };
         let etag = header(header::ETAG);
+        let last_modified = header(header::LAST_MODIFIED);
         let len = header(header::CONTENT_LENGTH).and_then(|v| v.parse().ok());
         let accepts_ranges = header(header::ACCEPT_RANGES).as_deref() == Some("bytes");
         if !accepts_ranges {
@@ -81,6 +83,7 @@ impl HttpReader {
             agent,
             url: final_url,
             etag,
+            last_modified,
             len,
             pos: 0,
             body: Some(resp.into_body().into_reader()),
@@ -92,6 +95,16 @@ impl HttpReader {
     /// The URL being read, after redirects.
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// The `ETag` header of the first response, if any.
+    pub fn etag(&self) -> Option<&str> {
+        self.etag.as_deref()
+    }
+
+    /// The `Last-Modified` header of the first response, if any.
+    pub fn last_modified(&self) -> Option<&str> {
+        self.last_modified.as_deref()
     }
 
     fn reconnect(&mut self) -> Result<()> {
@@ -228,7 +241,8 @@ mod tests {
                 let body = &data[start..];
                 let head = format!(
                     "HTTP/1.1 {status}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n\
-                     ETag: \"v1\"\r\nConnection: close\r\n\r\n",
+                     ETag: \"v1\"\r\nLast-Modified: Sat, 04 May 2024 08:42:14 GMT\r\n\
+                     Connection: close\r\n\r\n",
                     body.len()
                 );
                 stream.write_all(head.as_bytes()).unwrap();
@@ -253,6 +267,8 @@ mod tests {
         let (base, ranges) = serve(data.clone(), 30_000, 2);
         let mut r = HttpReader::open(test_agent(), &format!("{base}/latest")).unwrap();
         assert_eq!(r.url(), format!("{base}/file"));
+        assert_eq!(r.etag(), Some("\"v1\""));
+        assert_eq!(r.last_modified(), Some("Sat, 04 May 2024 08:42:14 GMT"));
         let mut got = Vec::new();
         r.read_to_end(&mut got).unwrap();
         assert_eq!(got.len(), data.len());
