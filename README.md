@@ -16,6 +16,8 @@ Work in progress. The first signal is **node density**: how many OSM
 nodes there are per km² of Earth surface, at a resolution of zoom-18
 Web Mercator tiles (~150 m at the equator), similar in spirit to
 [tyrasd/osm-node-density](https://github.com/tyrasd/osm-node-density).
+The second is [Nominatim's secondary importance](#nominatim-secondary-importance),
+republished in the same format.
 
 ## Usage
 
@@ -124,12 +126,96 @@ nodes; no NoData value is set, since zero nodes is a measurement.
    the order GDAL expects of a COG: smallest overview first, each level
    in row-major order.
 
+## Nominatim secondary importance
+
+```sh
+cargo run --release -- nominatim-secondary-importance --output-dir nominatim
+```
+
+This downloads the secondary importance raster that
+[Nominatim](https://nominatim.org/) uses to rank search results,
+[`wikimedia-secondary-importance.sql.gz`](https://nominatim.org/data/)
+(8 MB), and republishes it as a Cloud-Optimized GeoTIFF, without
+changing any value. It takes about 20 seconds. `--input` also takes a
+local file. The output is named after the file's `Last-Modified` date
+(for a local file, its modification time), such as
+`nominatim-secondary-importance.2024-05-04.tiff`, with a data BOM and
+a `datapackage.json` as for node density. The BOM also records the
+SHA-256 and SHA-512 of the input, since it is read whole. Give each
+signal its own output directory, so their `datapackage.json` files do
+not overwrite each other.
+
+### Output
+
+Nominatim's grid is kept as it is: plain longitude and latitude
+(EPSG:4326) from −180° to 180° and 90° to −90°, 16384 cells wide and
+high, so a cell is 360/16384° wide and 180/16384° tall (about 2.4 ×
+1.2 km at the equator). The full-resolution image has one pixel per
+cell; six overviews halve the resolution down to a single 256×256
+tile, keeping the largest of each 2×2 block. The pixel holding a
+location is
+
+```
+x = floor((lon + 180) / 360 · 16384)
+y = floor((90 − lat) / 180 · 16384)
+```
+
+Pixels are unsigned 16-bit integers, exactly as in Nominatim's
+database:
+
+```
+v = 0      no area (also declared as the NoData value)
+v > 0      importance = v / 65536
+```
+
+The file declares this scale in its GDAL metadata, so QGIS and GDAL
+show importance between 0 and 1. As for node density, it embeds an
+exact histogram of the full-resolution pixels as a Raster Attribute
+Table, here with one row per value that occurs.
+
+Each pixel holds the highest importance of the OSM areas covering it
+whose rank is below county level, such as municipalities, towns and
+suburbs. Countries, states and counties are not painted, so remote
+areas without a municipality are 0, such as the Nevada desert,
+inland Libya or much of Greenland. An area's importance comes from its Wikipedia article (via
+the `wikipedia` or `wikidata` tag) as computed by
+[osm-search/wikipedia-wikidata](https://github.com/osm-search/wikipedia-wikidata):
+the logarithm of how many Wikipedia articles link to it, across 39
+languages, scaled so that the most-linked article gets 1. Areas
+without an article get a default for their rank. The raster is made
+by [osm-search/secondary-importance](https://github.com/osm-search/secondary-importance).
+
+The published file dates from May 2024. Its defaults follow an older
+Nominatim formula, 0.75001 − rank/40 (so the most common value,
+26215, is 0.40001), rather than today's 0.40001 − rank/75.
+
+### How Nominatim uses it
+
+The raster is not a full importance score, since Nominatim scores a
+place by its tags and type, and only falls back to its location. For
+a place with centroid *c* and search rank *r*, Nominatim's
+[`compute_importance`](https://github.com/osm-search/Nominatim/blob/master/lib-sql/functions/importance.sql)
+does this:
+
+1. If the place's `wikipedia` tag names a known article, its
+   importance is that article's importance.
+2. Otherwise, if its `wikidata` tag names a known item, its importance
+   is that item's importance.
+3. Otherwise its importance is 0.40001 − r / 75, plus v / 655350000
+   where v is the raster value at *c*, so at most 0.0001. This only
+   breaks ties between places of the same rank, such as streets and
+   POIs without a Wikipedia article.
+
+Clients that know a place's tags and rank can follow the same steps,
+reading v from this GeoTIFF.
+
 ## Tests
 
-`cargo test` runs unit tests and an end-to-end test on a small extract
-around Zug. A smoke test on Liechtenstein from Geofabrik runs for
+`cargo test` runs unit tests and end-to-end tests on a small extract
+around Zug and on a tiny dump in Nominatim's format. A smoke test on Liechtenstein from Geofabrik runs for
 release tags and on demand (see `.github/workflows/smoke-test.yml`);
-locally, point `OSMSIGNALS_SMOKE_PBF` at any extract to run it.
+locally, point `OSMSIGNALS_SMOKE_PBF` at any extract to run it. It also
+republishes the real Nominatim raster and checks the result with GDAL.
 
 ## Contributing
 
@@ -147,5 +233,7 @@ the commit and publishes a GitHub Release.
 Code: [MIT](LICENSE). Output data is derived from OpenStreetMap,
 © OpenStreetMap contributors, available under the
 [Open Database License](https://www.openstreetmap.org/copyright).
+The secondary importance raster is made by Nominatim from OpenStreetMap
+areas and Wikipedia link counts.
 `tests/data/zugerland.osm.pbf` is an OpenStreetMap extract (ODbL),
 taken from [brawer/osmdiffs](https://github.com/brawer/osmdiffs).

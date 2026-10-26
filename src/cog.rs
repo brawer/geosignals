@@ -3,11 +3,10 @@
 
 //! Collects compressed tiles and writes them as a Cloud-Optimized GeoTIFF.
 //!
-//! The output is a BigTIFF with one 16-bit band in Web Mercator
-//! (EPSG:3857). The full-resolution image has one pixel per zoom-18 tile;
-//! overviews halve the resolution down to a single 256×256 tile.
-//! Tiles without any nodes are not stored at all (offset and byte count
-//! 0), which GDAL reads as all zeros.
+//! The output is a BigTIFF with one 16-bit band, square and a power of
+//! two tiles wide; see [`Grid`]. Overviews halve the resolution down to a
+//! single 256×256 tile. Tiles without data are not stored at all (offset
+//! and byte count 0), which GDAL reads as all zeros.
 //!
 //! The layout follows GDAL's COG driver, so that GDAL recognizes the file
 //! as cloud-optimized: header, structural metadata, all image file
@@ -23,7 +22,7 @@
 //! We use BigTIFF because the planet already needs 3 GB, close to the
 //! 4 GB limit of classic TIFF.
 
-use crate::tile::{MAX_TILE_ZOOM, PIXEL_ZOOM, TILE_SIZE};
+use crate::tile::{MAX_TILE_ZOOM, TILE_BITS, TILE_SIZE};
 use anyhow::{Context, Result, ensure};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -40,19 +39,54 @@ pub struct Metadata {
     pub max_value: u16,
     /// XML for the GDAL_METADATA tag, such as band scale and offset.
     pub gdal_metadata: String,
+    /// Pixel value for "no data", written as the GDAL_NODATA tag.
+    pub nodata: Option<u16>,
+}
+
+/// Coordinate reference system of the image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Crs {
+    /// Web Mercator (EPSG:3857), covering the square world of web maps.
+    WebMercator,
+    /// Longitude and latitude (EPSG:4326), covering −180° to 180° and
+    /// 90° to −90°, so pixels are twice as wide as tall in degrees.
+    Wgs84,
+}
+
+/// The pixel grid. The full-resolution image is `256 << max_zoom`
+/// pixels wide and high and covers the whole world in `crs`. Overview
+/// `z` has `2^z × 2^z` tiles, like a web map at zoom `z`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Grid {
+    pub crs: Crs,
+    pub max_zoom: u8,
+}
+
+impl Grid {
+    /// Web Mercator with one pixel per zoom-18 tile.
+    pub const WEB_MERCATOR: Grid = Grid {
+        crs: Crs::WebMercator,
+        max_zoom: MAX_TILE_ZOOM,
+    };
+
+    /// Width and height of the full-resolution image in pixels.
+    pub fn size(&self) -> u32 {
+        (TILE_SIZE as u32) << self.max_zoom
+    }
 }
 
 pub struct Spool {
+    grid: Grid,
     files: Vec<BufWriter<File>>,
     pub tiles_per_zoom: Vec<u64>,
     pub bytes_per_zoom: Vec<u64>,
 }
 
 impl Spool {
-    pub fn new(tmpdir: &Path) -> Result<Self> {
+    pub fn new(tmpdir: &Path, grid: Grid) -> Result<Self> {
         // Named files rather than unlinked ones, so their disk usage is
         // visible to whoever watches the working directory.
-        let files = (0..=MAX_TILE_ZOOM)
+        let files = (0..=grid.max_zoom)
             .map(|z| {
                 let path = tmpdir.join(format!("spool-{z:02}"));
                 let f = std::fs::OpenOptions::new()
@@ -64,8 +98,9 @@ impl Spool {
                 Ok(BufWriter::new(f))
             })
             .collect::<Result<_>>()?;
-        let n = MAX_TILE_ZOOM as usize + 1;
+        let n = grid.max_zoom as usize + 1;
         Ok(Spool {
+            grid,
             files,
             tiles_per_zoom: vec![0; n],
             bytes_per_zoom: vec![0; n],
@@ -74,6 +109,10 @@ impl Spool {
 
     pub fn add(&mut self, z: u8, x: u32, y: u32, data: &[u8]) -> Result<()> {
         ensure!(data.len() >= 4, "tile {z}/{x}/{y} too short");
+        ensure!(
+            z <= self.grid.max_zoom && x < 1 << z && y < 1 << z,
+            "tile {z}/{x}/{y} outside the grid"
+        );
         let f = &mut self.files[z as usize];
         f.write_all(&x.to_le_bytes())?;
         f.write_all(&y.to_le_bytes())?;
@@ -86,6 +125,7 @@ impl Spool {
 
     /// Writes the GeoTIFF to `path`.
     pub fn write_cog(self, path: &Path, meta: &Metadata) -> Result<()> {
+        let grid = self.grid;
         let mut levels = Vec::new();
         for (z, f) in self.files.into_iter().enumerate() {
             let f = f.into_inner().map_err(|e| e.into_error())?;
@@ -94,7 +134,7 @@ impl Spool {
 
         // Every value in the header region has a fixed width, so we can
         // lay it out once to learn its size, then again for real.
-        let len = header(&levels, meta, 0)?.len() as u64;
+        let len = header(&levels, meta, &grid, 0)?.len() as u64;
         let mut pos = len;
         for level in levels.iter_mut() {
             for t in level.tiles.iter_mut().filter(|t| t.len > 0) {
@@ -103,7 +143,7 @@ impl Spool {
             }
         }
         let data_end = pos;
-        let head = header(&levels, meta, data_end.next_multiple_of(8))?;
+        let head = header(&levels, meta, &grid, data_end.next_multiple_of(8))?;
         ensure!(head.len() as u64 == len, "header size changed");
 
         // Write under a temporary name and rename at the end, so that a
@@ -260,7 +300,7 @@ fn ascii(tag: u16, s: &str) -> Entry {
 /// structural metadata, one directory per zoom level (full resolution
 /// first), and the TileOffsets arrays. `byte_counts_pos` is where the
 /// TileByteCounts arrays will start, after the tile data.
-fn header(levels: &[Level], meta: &Metadata, byte_counts_pos: u64) -> Result<Vec<u8>> {
+fn header(levels: &[Level], meta: &Metadata, grid: &Grid, byte_counts_pos: u64) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     out.extend_from_slice(b"II");
     out.extend_from_slice(&43u16.to_le_bytes()); // BigTIFF
@@ -290,14 +330,14 @@ fn header(levels: &[Level], meta: &Metadata, byte_counts_pos: u64) -> Result<Vec
     let ifds_len: u64 = levels
         .iter()
         .rev()
-        .map(|l| ifd_len(&entries(l, l.zoom as usize == full, meta, 0, 0)))
+        .map(|l| ifd_len(&entries(l, l.zoom as usize == full, meta, grid, 0, 0)))
         .sum();
     let mut offsets_pos = out.len() as u64 + ifds_len;
     let mut counts_pos = byte_counts_pos;
 
     for (i, level) in levels.iter().enumerate().rev() {
         let n = level.tiles.len();
-        let entries = entries(level, i == full, meta, offsets_pos, counts_pos);
+        let entries = entries(level, i == full, meta, grid, offsets_pos, counts_pos);
         if n * 8 > 8 {
             offsets_pos += 8 * n as u64;
         }
@@ -324,6 +364,7 @@ fn entries(
     level: &Level,
     full: bool,
     meta: &Metadata,
+    grid: &Grid,
     offsets_pos: u64,
     counts_pos: u64,
 ) -> Vec<Entry> {
@@ -383,30 +424,59 @@ fn entries(
     }
     if full {
         e.push(ascii(33432, &meta.copyright)); // Copyright
-        let res = 2.0 * HALF_WORLD / f64::from(1u32 << PIXEL_ZOOM);
-        e.push(doubles(33550, &[res, res, 0.0])); // ModelPixelScale
-        e.push(doubles(
-            33922,
-            &[0.0, 0.0, 0.0, -HALF_WORLD, HALF_WORLD, 0.0],
-        )); // ModelTiepoint
-        // GeoKeyDirectory, as written by GDAL for EPSG:3857.
-        e.push(shorts(
-            34735,
-            &[
-                1, 1, 0, 7, // version 1.1.0, 7 keys
-                1024, 0, 1, 1, // GTModelType: projected
-                1025, 0, 1, 1, // GTRasterType: PixelIsArea
-                1026, 34737, 25, 0, // GTCitation
-                2049, 34737, 7, 25, // GeodeticCitation
-                2054, 0, 1, 9102, // GeogAngularUnits: degree
-                3072, 0, 1, 3857, // ProjectedCRS: Web Mercator
-                3076, 0, 1, 9001, // ProjLinearUnits: meter
-            ],
-        ));
-        e.push(ascii(34737, "WGS 84 / Pseudo-Mercator|WGS 84|")); // GeoAsciiParams
+        georef(&mut e, grid);
         e.push(ascii(42112, &meta.gdal_metadata)); // GDAL_METADATA
+        if let Some(v) = meta.nodata {
+            e.push(ascii(42113, &v.to_string())); // GDAL_NODATA
+        }
     }
     e
+}
+
+/// ModelPixelScale, ModelTiepoint and the GeoKeys, as GDAL writes them.
+fn georef(e: &mut Vec<Entry>, grid: &Grid) {
+    let pixel_zoom = grid.max_zoom + TILE_BITS;
+    let n = f64::from(1u32 << pixel_zoom);
+    match grid.crs {
+        Crs::WebMercator => {
+            let res = 2.0 * HALF_WORLD / n;
+            e.push(doubles(33550, &[res, res, 0.0])); // ModelPixelScale
+            e.push(doubles(
+                33922,
+                &[0.0, 0.0, 0.0, -HALF_WORLD, HALF_WORLD, 0.0],
+            )); // ModelTiepoint
+            e.push(shorts(
+                34735,
+                &[
+                    1, 1, 0, 7, // version 1.1.0, 7 keys
+                    1024, 0, 1, 1, // GTModelType: projected
+                    1025, 0, 1, 1, // GTRasterType: PixelIsArea
+                    1026, 34737, 25, 0, // GTCitation
+                    2049, 34737, 7, 25, // GeodeticCitation
+                    2054, 0, 1, 9102, // GeogAngularUnits: degree
+                    3072, 0, 1, 3857, // ProjectedCRS: Web Mercator
+                    3076, 0, 1, 9001, // ProjLinearUnits: meter
+                ],
+            ));
+            e.push(ascii(34737, "WGS 84 / Pseudo-Mercator|WGS 84|")); // GeoAsciiParams
+        }
+        Crs::Wgs84 => {
+            e.push(doubles(33550, &[360.0 / n, 180.0 / n, 0.0])); // ModelPixelScale
+            e.push(doubles(33922, &[0.0, 0.0, 0.0, -180.0, 90.0, 0.0])); // ModelTiepoint
+            e.push(shorts(
+                34735,
+                &[
+                    1, 1, 0, 5, // version 1.1.0, 5 keys
+                    1024, 0, 1, 2, // GTModelType: geographic
+                    1025, 0, 1, 1, // GTRasterType: PixelIsArea
+                    2048, 0, 1, 4326, // GeodeticCRS: WGS 84
+                    2049, 34737, 7, 0, // GeodeticCitation
+                    2054, 0, 1, 9102, // GeogAngularUnits: degree
+                ],
+            ));
+            e.push(ascii(34737, "WGS 84|")); // GeoAsciiParams
+        }
+    }
 }
 
 /// Size of a directory plus the out-of-line values stored after it.

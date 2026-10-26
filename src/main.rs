@@ -52,6 +52,40 @@ enum Command {
         #[arg(long, default_value = "")]
         run_id: String,
     },
+    /// Republishes Nominatim's secondary importance raster as a
+    /// Cloud-Optimized GeoTIFF in EPSG:4326.
+    NominatimSecondaryImportance {
+        /// The gzipped SQL dump to read: a file or an http(s) URL.
+        /// Defaults to the one published by nominatim.org.
+        #[arg(long, default_value = osmsignals::nominatim::URL)]
+        input: String,
+        /// Directory for the GeoTIFF, which gets named after the date the
+        /// input was last modified, such as
+        /// nominatim-secondary-importance.2024-05-04.tiff. Use a different
+        /// directory than for other signals, since each writes its own
+        /// datapackage.json.
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Working directory for temporary files, about as big as the
+        /// output. Each signal uses its own subdirectory.
+        #[arg(long, alias = "tmpdir", default_value_os_t = std::env::temp_dir())]
+        workdir: PathBuf,
+        /// Worker threads; defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Identifies this run in its scheduler, such as a Kubernetes
+        /// job name; recorded in the data bill of materials.
+        #[arg(long, default_value = "")]
+        run_id: String,
+    },
+}
+
+fn default_threads(threads: Option<usize>) -> usize {
+    threads.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    })
 }
 
 fn main() -> Result<()> {
@@ -67,11 +101,7 @@ fn main() -> Result<()> {
             smoke_test,
             run_id,
         } => {
-            let threads = threads.unwrap_or_else(|| {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(1)
-            });
+            let threads = default_threads(threads);
             let (reader, source) = open(&input)?;
             let cfg = osmsignals::node_density::Config {
                 input: osmsignals::bom::Input::new(&source),
@@ -88,8 +118,50 @@ fn main() -> Result<()> {
             let summary = osmsignals::node_density::run(input, &cfg)?;
             eprintln!("{summary:#?}");
         }
+        Command::NominatimSecondaryImportance {
+            input,
+            output_dir,
+            workdir,
+            threads,
+            run_id,
+        } => {
+            let (reader, source, timestamp) = open_dated(&input)?;
+            let cfg = osmsignals::nominatim::Config {
+                input: osmsignals::bom::Input::new(&source).from(&osmsignals::bom::NOMINATIM),
+                timestamp,
+                run_id,
+                output_dir,
+                workdir,
+                threads: default_threads(threads),
+            };
+            let summary = osmsignals::nominatim::run(reader, &cfg)?;
+            eprintln!("{summary:#?}");
+        }
     }
     Ok(())
+}
+
+/// Like [`open`], but also returns when the input was last modified:
+/// for a URL, its Last-Modified header; for a file, its mtime.
+fn open_dated(input: &str) -> Result<(Box<dyn Read + Send>, String, i64)> {
+    use osmsignals::date;
+    if input.starts_with("https://") || input.starts_with("http://") {
+        let reader = osmsignals::http::HttpReader::open(osmsignals::http::agent(), input)?;
+        eprintln!("reading {}", reader.url());
+        let modified = reader
+            .last_modified()
+            .with_context(|| format!("{} has no Last-Modified header", reader.url()))?;
+        let timestamp = date::parse_http_date(modified)?;
+        let url = reader.url().to_string();
+        return Ok((Box::new(reader), url, timestamp));
+    }
+    anyhow::ensure!(
+        input != "-",
+        "standard input has no date; pass a file or URL"
+    );
+    let timestamp = date::mtime(std::path::Path::new(input))?;
+    let (reader, source) = open(input)?;
+    Ok((reader, source, timestamp))
 }
 
 /// Opens the input, and returns it with where it actually comes from:
