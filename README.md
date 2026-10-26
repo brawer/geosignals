@@ -17,7 +17,9 @@ nodes there are per km² of Earth surface, at a resolution of zoom-18
 Web Mercator tiles (~150 m at the equator), similar in spirit to
 [tyrasd/osm-node-density](https://github.com/tyrasd/osm-node-density).
 The second is [Nominatim's secondary importance](#nominatim-secondary-importance),
-republished in the same format.
+republished in the same format. The third is
+[public transport departures](#public-transport-departures) per day
+and km², counted from GTFS feeds.
 
 ## Usage
 
@@ -209,10 +211,92 @@ does this:
 Clients that know a place's tags and rank can follow the same steps,
 reading v from this GeoTIFF.
 
+## Public transport departures
+
+```sh
+git clone --depth 1 https://github.com/public-transport/transitous
+git clone --depth 1 https://github.com/transitland/transitland-atlas
+cargo run --release -- transit-departures \
+  --feeds transitous/feeds --transitland-atlas transitland-atlas \
+  --cache s3://my-bucket/osmsignals --output-dir transit
+```
+
+This counts how often public transport departs, per day and km² of
+Earth surface, at the same zoom-18 resolution and with the same
+logarithmic encoding as node density:
+
+```
+v = 0                      no departures
+log2(departures per day per km²) = 0.01·v − 15.01   otherwise
+```
+
+**Feeds.** The feed list comes from
+[Transitous](https://github.com/public-transport/transitous) (CC0),
+which curates static GTFS feeds worldwide in one JSON file per region.
+Sources that point into the [Transitland Atlas](https://github.com/transitland/transitland-atlas)
+or the [Mobility Database](https://mobilitydatabase.org/) are resolved
+with those catalogs; the Mobility Database export is fetched from its
+website unless `--mobility-database` names a local copy (or `none`).
+Feeds that Transitous skips, that need credentials, or that are not
+GTFS are left out. By default (`--licenses open`) only feeds under a
+license we may republish with attribution are used: CC0, CC-BY,
+ODbL, etalab, NLOD, DL-DE and similar, but not other share-alike,
+non-commercial or unknown licenses. `--licenses any` uses all feeds,
+for internal use. `--only ch/` restricts a run to some regions.
+
+**Cache.** `--cache` is a directory or an S3-compatible bucket
+(`s3://bucket/prefix`, configured with `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and `AWS_ENDPOINT_URL`). For each
+feed it keeps the last download, its `ETag`, `Last-Modified` and
+SHA-256, and a condensed copy of its median week. A run asks each
+publisher whether the feed changed (`If-None-Match`,
+`If-Modified-Since`), retries network errors, tries mirrors such as
+MobilityData's daily copy, and if all fail uses the cached copy,
+however old, as long as its timetable ended at most
+`--max-expired-days` (90) before `--date`. `--offline` uses only the
+cache. The Swiss and German national feeds (160 and 230 MB) condense
+to 11 and 59 MB; a planet-wide cache should need some 20–40 GB of raw
+feeds plus a few GB of condensed ones.
+
+**Median week.** A feed's calendar spans weeks to a year, with
+holidays and timetable changes. For each feed we count the trips on
+each day, split the days into weeks from Monday to Sunday, and take the
+week whose total is the median, which skips holiday weeks and the
+thin tail at the end of a feed. Every departure in that week (any stop
+of a trip but its last, unless `pickup_type = 1`; `frequencies.txt` is
+expanded) adds 1/7 to its pixel, so the value is departures on an
+average day of a typical week, weekends included.
+
+**Duplicates.** National and regional feeds often contain the same
+trips. Feeds with stops in the same zoom-15 tile are compared pairwise:
+a departure of the smaller feed matches if the larger feed departs on
+the same weekday within one pixel and one minute of it, and a trip
+whose departures match at least 80% (and at least two) is dropped on
+that weekday. So each trip counts once, in the largest feed that has
+it. On the Swiss and German national feeds this finds the German
+border buses in the Swiss feed, the same ones Transitous drops by
+hand; shifting one feed's times by seven minutes matches almost
+nothing (0.05% of trips).
+
+**Output.** Besides `transit-departures.2026-10-26.tiff` (named after
+`--date`, default today), its data BOM lists every feed used with its
+URL, SHA-256, license and attribution, and `datapackage.json` lists
+them as sources. `transit-departures.2026-10-26.report.json` gives each
+feed's status (changed, unchanged, stale with the error, expired or
+failed), its median week, its departures per week and duplicates, the
+skipped sources with reasons, and the duplicates by pair of feeds and
+agency.
+
+On the Swiss, German and bodo feeds, a run takes about a minute and
+1.2 GB of memory; with a warm cache, 20 seconds. Condensing a feed
+takes up to about 1 GB, so `--threads` also bounds memory.
+
 ## Tests
 
 `cargo test` runs unit tests and end-to-end tests on a small extract
-around Zug and on a tiny dump in Nominatim's format. A smoke test on Liechtenstein from Geofabrik runs for
+around Zug, on a tiny dump in Nominatim's format, and on two small GTFS
+feeds served over HTTP, through the cache while the server is up,
+unchanged and down. A smoke test on Liechtenstein from Geofabrik runs for
 release tags and on demand (see `.github/workflows/smoke-test.yml`);
 locally, point `OSMSIGNALS_SMOKE_PBF` at any extract to run it. It also
 republishes the real Nominatim raster and checks the result with GDAL.

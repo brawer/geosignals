@@ -136,9 +136,95 @@ pub fn bom_path(output: &Path) -> PathBuf {
 /// Writes the BOM for a finished output file with the given hashes,
 /// and returns its path.
 pub fn write(run: &Run, output: &Hashes) -> Result<PathBuf> {
-    let bom = build(run, &output.sha256, &output.sha512);
-    let path = bom_path(run.output);
-    let mut text = serde_json::to_string_pretty(&bom)?;
+    save(run.output, &build(run, &output.sha256, &output.sha512))
+}
+
+/// One of many inputs of a run, such as a transit feed.
+#[derive(Clone, Debug, Default)]
+pub struct Source {
+    /// Unique among the run's inputs, such as `gtfs/ch/sbb`.
+    pub name: String,
+    /// When this version of the input was published or fetched, in
+    /// seconds since the epoch.
+    pub version: i64,
+    /// Where it was downloaded from.
+    pub url: Option<String>,
+    /// SPDX identifier of its license.
+    pub license_id: Option<String>,
+    pub license_url: Option<String>,
+    /// Attribution that its publisher asks for.
+    pub copyright: Option<String>,
+    pub sha256: Option<String>,
+}
+
+/// What a signal pipeline with many inputs tells the BOM about its run.
+pub struct SourcesRun<'a> {
+    pub sources: &'a [Source],
+    pub timestamp: i64,
+    pub output: &'a Path,
+    pub description: &'a str,
+    pub run_id: &'a str,
+    /// Copyright statement for the output.
+    pub copyright: &'a str,
+}
+
+/// Writes the BOM for an output made from many sources.
+pub fn write_sources(run: &SourcesRun, output: &Hashes) -> Result<PathBuf> {
+    let components = run.sources.iter().map(source_component).collect();
+    let doc = document(
+        &Doc {
+            timestamp: run.timestamp,
+            output: run.output,
+            description: run.description,
+            run_id: run.run_id,
+            copyright: run.copyright,
+        },
+        &output.sha256,
+        &output.sha512,
+        components,
+    );
+    save(run.output, &doc)
+}
+
+fn source_component(s: &Source) -> Value {
+    let mut license = json!({});
+    match (&s.license_id, &s.license_url) {
+        (Some(id), _) => license["id"] = json!(id),
+        (None, _) => license["name"] = json!("see license URL"),
+    }
+    if let Some(url) = &s.license_url {
+        license["url"] = json!(url);
+    }
+    let mut refs = Vec::new();
+    let mut data = json!({"type": "dataset"});
+    if let Some(url) = &s.url {
+        refs.push(json!({"type": "distribution", "url": url}));
+        data["contents"] = json!({"url": url});
+    }
+    if let Some(url) = &s.license_url {
+        refs.push(json!({"type": "license", "url": url}));
+    }
+    let mut c = json!({
+        "bom-ref": s.name,
+        "type": "data",
+        "name": s.name,
+        "version": crate::date::rfc3339(s.version),
+        "licenses": [{"license": license}],
+        "data": [data],
+        "externalReferences": refs,
+    });
+    if let Some(copyright) = &s.copyright {
+        c["copyright"] = json!(copyright);
+    }
+    if let Some(h) = &s.sha256 {
+        c["hashes"] = json!([{"alg": "SHA-256", "content": h}]);
+    }
+    c
+}
+
+fn save(output: &Path, bom: &Value) -> Result<PathBuf> {
+    let path = bom_path(output);
+    let mut text = serde_json::to_string_pretty(bom)?;
     text.push('\n');
     let partial = path.with_extension("json.partial");
     std::fs::write(&partial, text).with_context(|| format!("writing {}", partial.display()))?;
@@ -147,13 +233,7 @@ pub fn write(run: &Run, output: &Hashes) -> Result<PathBuf> {
 }
 
 fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
-    let version = env!("CARGO_PKG_VERSION");
     let anchor = crate::date::rfc3339(run.timestamp);
-    let output_name = run
-        .output
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let input_ref = run.input.name.clone();
 
     // Planet dumps share one package name, whatever their file name.
@@ -194,6 +274,43 @@ fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
         ]);
     }
 
+    document(
+        &Doc {
+            timestamp: run.timestamp,
+            output: run.output,
+            description: run.description,
+            run_id: run.run_id,
+            copyright: OSM_COPYRIGHT,
+        },
+        sha256,
+        sha512,
+        vec![input],
+    )
+}
+
+/// What every data BOM says about the output and the run.
+struct Doc<'a> {
+    timestamp: i64,
+    output: &'a Path,
+    description: &'a str,
+    run_id: &'a str,
+    /// Copyright of the output, from its inputs.
+    copyright: &'a str,
+}
+
+fn document(doc: &Doc, sha256: &str, sha512: &str, components: Vec<Value>) -> Value {
+    let version = env!("CARGO_PKG_VERSION");
+    let anchor = crate::date::rfc3339(doc.timestamp);
+    let output_name = doc
+        .output
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let refs: Vec<Value> = components.iter().map(|c| c["bom-ref"].clone()).collect();
+    let inputs: Vec<Value> = refs
+        .iter()
+        .map(|r| json!({"resource": {"ref": r}}))
+        .collect();
     json!({
         "bomFormat": "CycloneDX",
         "specVersion": "1.7",
@@ -221,10 +338,10 @@ fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
                 "name": output_name,
                 "mime-type": COG_MIME_TYPE,
                 "version": anchor,
-                "description": run.description,
+                "description": doc.description,
                 "supplier": supplier(),
                 "licenses": license(),
-                "copyright": OSM_COPYRIGHT,
+                "copyright": doc.copyright,
                 "hashes": [
                     {"alg": "SHA-256", "content": sha256},
                     {"alg": "SHA-512", "content": sha512},
@@ -236,19 +353,19 @@ fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
                 ],
             },
         },
-        "components": [input],
-        "dependencies": [{"ref": output_name, "dependsOn": [input_ref]}],
+        "components": components,
+        "dependencies": [{"ref": output_name, "dependsOn": refs}],
         "formulation": [{
             "bom-ref": "formula-osmsignals",
             "workflows": [{
                 "bom-ref": "workflow-osmsignals",
-                "uid": run.run_id,
-                "name": format!("osmsignals {}", run.description),
+                "uid": doc.run_id,
+                "name": format!("osmsignals {}", doc.description),
                 "taskTypes": ["build"],
                 "timeStart": anchor,
                 "timeEnd": anchor,
                 "resourceReferences": [{"ref": "tool-osmsignals"}],
-                "inputs": [{"resource": {"ref": input_ref}}],
+                "inputs": inputs,
                 "outputs": [{"resource": {"ref": output_name}}],
             }],
         }],

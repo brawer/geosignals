@@ -78,6 +78,59 @@ enum Command {
         #[arg(long, default_value = "")]
         run_id: String,
     },
+    /// Counts public transport departures per day from the GTFS feeds
+    /// that Transitous lists, as a Cloud-Optimized GeoTIFF.
+    TransitDepartures {
+        /// The `feeds` directory of a checkout of
+        /// https://github.com/public-transport/transitous.
+        #[arg(long)]
+        feeds: PathBuf,
+        /// A checkout of https://github.com/transitland/transitland-atlas,
+        /// for feeds that Transitous takes from there.
+        #[arg(long)]
+        transitland_atlas: Option<PathBuf>,
+        /// The Mobility Database export, as a file or URL, for feeds that
+        /// Transitous takes from there. "none" skips those feeds.
+        #[arg(long, default_value = osmsignals::transit::MOBILITY_DATABASE_CSV)]
+        mobility_database: String,
+        /// Where to keep downloaded and condensed feeds between runs: a
+        /// directory, or s3://bucket/prefix with credentials in AWS_ACCESS_KEY_ID,
+        /// AWS_SECRET_ACCESS_KEY, AWS_REGION and AWS_ENDPOINT_URL.
+        #[arg(long)]
+        cache: String,
+        /// Directory for the GeoTIFF, which gets named after --date,
+        /// such as transit-departures.2026-10-26.tiff.
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Working directory for downloads in progress. Each signal uses
+        /// its own subdirectory.
+        #[arg(long, alias = "tmpdir", default_value_os_t = std::env::temp_dir())]
+        workdir: PathBuf,
+        /// Worker threads; defaults to the number of CPUs. Each condenses
+        /// one feed at a time, which takes up to about 1 GB of memory.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// The day of the output, as YYYY-MM-DD; defaults to today (UTC).
+        #[arg(long)]
+        date: Option<String>,
+        /// Which feeds to use, by license.
+        #[arg(long, value_enum, default_value_t = osmsignals::transit::Licenses::Open)]
+        licenses: osmsignals::transit::Licenses,
+        /// Use only cached feeds, without contacting any publisher.
+        #[arg(long)]
+        offline: bool,
+        /// Only use feeds whose id starts with this, such as "ch/";
+        /// may be given several times.
+        #[arg(long)]
+        only: Vec<String>,
+        /// Drop feeds whose service ended more than this many days before --date.
+        #[arg(long, default_value_t = 90)]
+        max_expired_days: i64,
+        /// Identifies this run in its scheduler, such as a Kubernetes
+        /// job name; recorded in the data bill of materials.
+        #[arg(long, default_value = "")]
+        run_id: String,
+    },
 }
 
 fn default_threads(threads: Option<usize>) -> usize {
@@ -137,8 +190,66 @@ fn main() -> Result<()> {
             let summary = osmsignals::nominatim::run(reader, &cfg)?;
             eprintln!("{summary:#?}");
         }
+        Command::TransitDepartures {
+            feeds,
+            transitland_atlas,
+            mobility_database,
+            cache,
+            output_dir,
+            workdir,
+            threads,
+            date,
+            licenses,
+            offline,
+            only,
+            max_expired_days,
+            run_id,
+        } => {
+            let date = match date {
+                Some(d) => parse_date(&d)?,
+                None => std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs() as i64,
+            };
+            let cfg = osmsignals::transit::Config {
+                feeds,
+                transitland_atlas,
+                mobility_database: Some(mobility_database).filter(|m| m != "none"),
+                cache,
+                output_dir,
+                workdir,
+                threads: default_threads(threads),
+                date,
+                licenses,
+                offline,
+                only,
+                max_expired_days,
+                run_id,
+                retry_delay: std::time::Duration::from_secs(2),
+            };
+            let summary = osmsignals::transit::run(&cfg)?;
+            eprintln!("{summary:#?}");
+        }
     }
     Ok(())
+}
+
+/// Parses YYYY-MM-DD into seconds since the epoch.
+fn parse_date(s: &str) -> Result<i64> {
+    let parts: Vec<&str> = s.split('-').collect();
+    let ok = parts.len() == 3 && parts[0].len() == 4 && parts[1].len() == 2 && parts[2].len() == 2;
+    let n = |p: &str| p.parse::<u32>().ok();
+    match (
+        ok,
+        n(parts[0]),
+        parts.get(1).and_then(|p| n(p)),
+        parts.get(2).and_then(|p| n(p)),
+    ) {
+        (true, Some(y), Some(m), Some(d)) if (1..=12).contains(&m) && (1..=31).contains(&d) => {
+            Ok(osmsignals::date::days_from_civil(i64::from(y), m, d) * 86_400)
+        }
+        _ => anyhow::bail!("bad date {s:?}, expected YYYY-MM-DD"),
+    }
 }
 
 /// Like [`open`], but also returns when the input was last modified:

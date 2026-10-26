@@ -61,10 +61,29 @@ pub struct HttpReader {
 
 impl HttpReader {
     pub fn open(agent: ureq::Agent, url: &str) -> Result<HttpReader> {
-        let resp = agent
-            .get(url)
-            .call()
-            .with_context(|| format!("fetching {url}"))?;
+        Ok(Self::open_if_changed(agent, url, None, None)?.expect("unconditional request"))
+    }
+
+    /// Like [`HttpReader::open`], but sends `If-None-Match` and
+    /// `If-Modified-Since` with what an earlier response said, and
+    /// returns `None` if the server answers that nothing has changed.
+    pub fn open_if_changed(
+        agent: ureq::Agent,
+        url: &str,
+        etag: Option<&str>,
+        last_modified: Option<&str>,
+    ) -> Result<Option<HttpReader>> {
+        let mut req = agent.get(url);
+        if let Some(etag) = etag {
+            req = req.header(header::IF_NONE_MATCH, etag);
+        }
+        if let Some(lm) = last_modified {
+            req = req.header(header::IF_MODIFIED_SINCE, lm);
+        }
+        let resp = req.call().with_context(|| format!("fetching {url}"))?;
+        if resp.status() == StatusCode::NOT_MODIFIED {
+            return Ok(None);
+        }
         let final_url = resp.get_uri().to_string();
         let header = |name| {
             resp.headers()
@@ -79,7 +98,7 @@ impl HttpReader {
         if !accepts_ranges {
             eprintln!("warning: {final_url} does not accept range requests");
         }
-        Ok(HttpReader {
+        Ok(Some(HttpReader {
             agent,
             url: final_url,
             etag,
@@ -89,7 +108,7 @@ impl HttpReader {
             body: Some(resp.into_body().into_reader()),
             got_data: false,
             backoff: Duration::from_secs(1),
-        })
+        }))
     }
 
     /// The URL being read, after redirects.

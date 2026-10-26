@@ -15,5 +15,8 @@ pub mod node_density;
 pub mod nominatim;
 pub mod pbf;
 pub mod pyramid;
+pub mod raster;
+pub mod store;
 pub mod tile;
+pub mod transit;
 pub mod workdir;

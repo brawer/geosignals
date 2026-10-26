@@ -55,6 +55,12 @@ pub fn dequantize(v: u16) -> f64 {
 
 /// Converts the counts of tile `z/_/y` into quantized pixel values.
 pub fn pixels(z: u8, y: u32, counts: &Counts) -> Vec<u16> {
+    pixels_scaled(z, y, counts, 1.0)
+}
+
+/// Like [`pixels`], for counts that are `1 / scale` of the quantity
+/// to encode, such as departures per week for departures per day.
+pub fn pixels_scaled(z: u8, y: u32, counts: &Counts, scale: f64) -> Vec<u16> {
     let pixel_zoom = z + TILE_BITS;
     let mut out = vec![0u16; TILE_SIZE * TILE_SIZE];
     for row in 0..TILE_SIZE {
@@ -62,7 +68,7 @@ pub fn pixels(z: u8, y: u32, counts: &Counts) -> Vec<u16> {
         let src = &counts[row * TILE_SIZE..(row + 1) * TILE_SIZE];
         let dst = &mut out[row * TILE_SIZE..(row + 1) * TILE_SIZE];
         for (d, &c) in dst.iter_mut().zip(src) {
-            *d = quantize(c as f64 / area);
+            *d = quantize(c as f64 * scale / area);
         }
     }
     out

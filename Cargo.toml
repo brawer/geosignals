@@ -13,6 +13,7 @@ repository = "https://github.com/brawer/osmsignals"
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 crossbeam-channel = "0.5.17"
+csv = "1.4.0"
 fast_hilbert = "2.1.0"
 flate2 = "1.1.10"
 osmpbf = "0.3.8"
@@ -20,6 +21,7 @@ ring = "0.17.14"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 tempfile = "3.27.0"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+zip = { version = "9.1.1", default-features = false, features = ["deflate-flate2"] }
 zstd = "0.14.3"
 
 [dev-dependencies]

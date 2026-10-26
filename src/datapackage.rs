@@ -55,11 +55,44 @@ pub struct Files<'a> {
 /// Writes `datapackage.json` next to the files and returns its path.
 pub fn write(pkg: &Package, files: &Files) -> Result<PathBuf> {
     let bom_hashes = bom::hash_file(files.bom)?;
-    let doc = build(pkg, files, &bom_hashes);
-    let dir = files.tiff.parent().unwrap_or(Path::new("."));
+    save(files.tiff, &build(pkg, files, &bom_hashes))
+}
+
+/// What one run made from many sources produced.
+pub struct ManyFiles<'a> {
+    /// Each source as a Frictionless source object, with `title`,
+    /// `path` and `version`.
+    pub sources: Vec<Value>,
+    /// What to call one source in descriptions, such as "GTFS feed".
+    pub noun: &'a str,
+    /// Date of the data, in seconds since the epoch.
+    pub timestamp: i64,
+    pub tiff: &'a Path,
+    pub tiff_hashes: &'a Hashes,
+    pub bom: &'a Path,
+}
+
+/// Like [`write`], for an output made from many sources.
+pub fn write_many(pkg: &Package, files: &ManyFiles) -> Result<PathBuf> {
+    let bom_hashes = bom::hash_file(files.bom)?;
+    let doc = document(
+        pkg,
+        files.sources.clone(),
+        files.noun,
+        files.timestamp,
+        files.tiff,
+        files.tiff_hashes,
+        files.bom,
+        &bom_hashes,
+    );
+    save(files.tiff, &doc)
+}
+
+fn save(tiff: &Path, doc: &Value) -> Result<PathBuf> {
+    let dir = tiff.parent().unwrap_or(Path::new("."));
     let path = dir.join(FILE_NAME);
     let partial = dir.join(format!("{FILE_NAME}.partial"));
-    let mut text = serde_json::to_string_pretty(&doc)?;
+    let mut text = serde_json::to_string_pretty(doc)?;
     text.push('\n');
     std::fs::write(&partial, text).with_context(|| format!("writing {}", partial.display()))?;
     std::fs::rename(&partial, &path)?;
@@ -68,7 +101,6 @@ pub fn write(pkg: &Package, files: &Files) -> Result<PathBuf> {
 
 fn build(pkg: &Package, files: &Files, bom_hashes: &Hashes) -> Value {
     let created = crate::date::rfc3339(files.timestamp);
-    let date = &created[..10];
     let mut source = json!({
         "title": format!("{} {}", files.input.supplier.title, files.input.name),
         "version": created,
@@ -76,6 +108,31 @@ fn build(pkg: &Package, files: &Files, bom_hashes: &Hashes) -> Value {
     if let Some(url) = &files.input.url {
         source["path"] = json!(url);
     }
+    document(
+        pkg,
+        vec![source],
+        files.input.supplier.noun,
+        files.timestamp,
+        files.tiff,
+        files.tiff_hashes,
+        files.bom,
+        bom_hashes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn document(
+    pkg: &Package,
+    sources: Vec<Value>,
+    noun: &str,
+    timestamp: i64,
+    tiff: &Path,
+    tiff_hashes: &Hashes,
+    bom: &Path,
+    bom_hashes: &Hashes,
+) -> Value {
+    let created = crate::date::rfc3339(timestamp);
+    let date = &created[..10];
     json!({
         "$schema": SCHEMA,
         "name": pkg.name,
@@ -90,26 +147,23 @@ fn build(pkg: &Package, files: &Files, bom_hashes: &Hashes) -> Value {
             "path": ODBL_URL,
             "title": "Open Data Commons Open Database License v1.0",
         }],
-        "sources": [source],
+        "sources": sources,
         "resources": [
             resource(
                 pkg.name,
-                files.tiff,
+                tiff,
                 pkg.title,
                 "Cloud-Optimized GeoTIFF. This dated file never changes; \
                  the next release gets a new one.",
                 "tiff",
                 COG_MEDIA_TYPE,
-                files.tiff_hashes,
+                tiff_hashes,
             ),
             resource(
                 &format!("{}-bom", pkg.name),
-                files.bom,
+                bom,
                 "Data bill of materials (CycloneDX 1.7)",
-                &format!(
-                    "Which osmsignals release made the GeoTIFF, from which {}.",
-                    files.input.supplier.noun
-                ),
+                &format!("Which osmsignals release made the GeoTIFF, from which {noun}."),
                 "json",
                 CYCLONEDX_MEDIA_TYPE,
                 bom_hashes,
