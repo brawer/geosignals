@@ -243,12 +243,12 @@ mod tests {
                     }
                 }
                 if path == "/latest" {
-                    let resp = "HTTP/1.1 302 Found\r\nLocation: /file\r\nContent-Length: 0\r\n\r\n";
+                    let resp = "HTTP/1.1 302 Found\r\nLocation: /file\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                     stream.write_all(resp.as_bytes()).unwrap();
                     continue;
                 }
                 if if_match.is_some_and(|m| m != "\"v1\"") {
-                    let resp = "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\n\r\n";
+                    let resp = "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                     stream.write_all(resp.as_bytes()).unwrap();
                     continue;
                 }
