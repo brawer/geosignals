@@ -78,6 +78,42 @@ enum Command {
         #[arg(long, default_value = "")]
         run_id: String,
     },
+    /// Counts distinct iNaturalist and eBird observers per km², from
+    /// GBIF's occurrence snapshot, as one Cloud-Optimized GeoTIFF per
+    /// dataset and license.
+    NaturalistObservers {
+        /// The GBIF snapshot to read, as YYYY-MM-DD; defaults to the latest.
+        #[arg(long)]
+        snapshot: Option<String>,
+        /// The bucket holding GBIF's snapshots, or one of its mirrors.
+        #[arg(long, default_value = osmsignals::observers::snapshot::BUCKET_URL)]
+        bucket: String,
+        /// Directory for the GeoTIFFs, which get named after the snapshot
+        /// and their license, such as
+        /// inaturalist-observers.2026-10-01.cc-by-4.0.tiff.
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Working directory for temporary files, a few GB. Each signal
+        /// uses its own subdirectory.
+        #[arg(long, alias = "tmpdir", default_value_os_t = std::env::temp_dir())]
+        workdir: PathBuf,
+        /// Worker threads; defaults to the number of CPUs. Most of the
+        /// time goes to waiting for S3, so more threads than CPUs help.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Pairs of observer and pixel held in memory, for all layers
+        /// together, before spilling a sorted run to disk; 8 bytes each.
+        #[arg(long, default_value_t = 32 << 20)]
+        run_size: usize,
+        /// Read only these files of the snapshot, by their position in
+        /// its listing, such as 6000..6010; for testing.
+        #[arg(long, value_parser = parse_range)]
+        files: Option<std::ops::Range<usize>>,
+        /// Identifies this run in its scheduler, such as a Kubernetes
+        /// job name; recorded in the data bills of materials.
+        #[arg(long, default_value = "")]
+        run_id: String,
+    },
     /// Counts public transport departures per day from the GTFS feeds
     /// that Transitous lists, as a Cloud-Optimized GeoTIFF.
     TransitDepartures {
@@ -144,6 +180,20 @@ fn default_threads(threads: Option<usize>) -> usize {
     })
 }
 
+/// Caps glibc at two malloc arenas, unless `MALLOC_ARENA_MAX` says
+/// otherwise. By default glibc gives threads up to eight arenas per
+/// CPU, and with dozens of reader threads freeing what others
+/// allocated, about a third of our memory went to arena slack.
+fn limit_malloc_arenas() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    if std::env::var_os("MALLOC_ARENA_MAX").is_none() {
+        // SAFETY: mallopt only changes allocator settings.
+        unsafe {
+            libc::mallopt(libc::M_ARENA_MAX, 2);
+        }
+    }
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::NodeDensity {
@@ -193,6 +243,30 @@ fn main() -> Result<()> {
             let summary = osmsignals::nominatim::run(reader, &cfg)?;
             eprintln!("{summary:#?}");
         }
+        Command::NaturalistObservers {
+            snapshot,
+            bucket,
+            output_dir,
+            workdir,
+            threads,
+            run_size,
+            files,
+            run_id,
+        } => {
+            let cfg = osmsignals::observers::Config {
+                bucket,
+                snapshot,
+                output_dir,
+                workdir,
+                threads: default_threads(threads),
+                run_size,
+                files,
+                run_id,
+            };
+            limit_malloc_arenas();
+            let summary = osmsignals::observers::run(&cfg)?;
+            eprintln!("{summary:#?}");
+        }
         Command::TransitDepartures {
             transitous,
             transitland_atlas,
@@ -235,6 +309,16 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Parses a range of indices such as `6000..6010`.
+fn parse_range(s: &str) -> Result<std::ops::Range<usize>> {
+    let (a, b) = s
+        .split_once("..")
+        .with_context(|| format!("bad range {s:?}, expected START..END"))?;
+    let (a, b) = (a.trim().parse()?, b.trim().parse()?);
+    anyhow::ensure!(a < b, "empty range {s:?}");
+    Ok(a..b)
 }
 
 /// Parses YYYY-MM-DD into seconds since the epoch.

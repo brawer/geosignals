@@ -305,12 +305,92 @@ run should fit on a 2 GB machine with 2–4 threads. Scratch disk needs
 about 12 bytes per stop time of the median week, a few GB planet-wide,
 plus the downloads in progress.
 
+## Naturalist observers
+
+```sh
+cargo run --release -- naturalist-observers --output-dir observers
+```
+
+This counts how many different people reported wildlife from each
+place, from two citizen-science datasets as published in
+[GBIF](https://www.gbif.org)'s monthly
+[occurrence snapshot](https://registry.opendata.aws/gbif/) on Amazon
+S3: [iNaturalist](https://doi.org/10.15468/ab3s5x) (research-grade
+observations) and [eBird](https://doi.org/10.15468/aomfnb). Each
+record carries its own license, so a run writes one GeoTIFF per dataset
+and license, each with its own data BOM, and one `datapackage.json`
+that lists them all with their licenses:
+
+| File | Records used | License |
+| --- | --- | --- |
+| `ebird-observers.2026-10-01.cc-by-4.0.tiff` | eBird, CC0 and CC BY | CC BY 4.0 |
+| `inaturalist-observers.2026-10-01.cc-by-4.0.tiff` | iNaturalist, CC0 and CC BY | CC BY 4.0 |
+| `inaturalist-observers.2026-10-01.cc-by-nc-4.0.tiff` | iNaturalist, CC0, CC BY and CC BY-NC | CC BY-NC 4.0 |
+
+The NonCommercial file is a superset of the iNaturalist CC BY file.
+Share-alike, no-derivatives and unlicensed records are never used;
+GBIF does not take them from iNaturalist anyway. The files are named
+after the snapshot; `--snapshot 2026-09-01` reads an older one, and
+`--bucket` takes one of GBIF's mirrors in other AWS regions.
+
+**Reading.** The snapshot is about 300 GB of Parquet in some 10,000
+files, holding every occurrence in GBIF. We never download a whole
+file: for each one we fetch its footer and its `datasetkey` column
+with HTTP range requests, and only for row groups that hold one of our
+datasets also `license`, `decimallatitude`, `decimallongitude`,
+`coordinateuncertaintyinmeters` and `recordedby`, one megabyte at a
+time as we decode them. A full run reads
+about 4 GB. Most of the time goes to waiting for S3, so `--threads`
+can well exceed the number of CPUs.
+
+**Records.** Records without a location, without an observer, or with
+a stated uncertainty worse than 10 km are left out. The last includes
+the locations that iNaturalist blurs to a 0.2° box to protect
+threatened species or an observer's privacy, about 6% of its records,
+which GBIF marks with an uncertainty of 20–30 km.
+
+**Counting.** Pixels count *distinct* observers, by the `recordedby`
+field: someone who reported 300 birds from one park counts once. The
+finest pixels are zoom-16 tiles (about 611 m at the equator), since
+finer pixels would mostly show GPS noise and the paths of single
+people; eight overviews follow. Overview pixels count the distinct
+observers of their whole area, so they are not sums of their children.
+To do that in one pass, we sort the (observer, pixel) pairs by
+observer and then by the pixel's Hilbert key; shifting a key right by
+two bits gives its parent pixel, which keeps the pairs sorted, so
+dropping repeats gives the distinct pairs of every level at once.
+Pixel values use the same scale as node density, for observers per km²:
+
+```
+v = 0                      no observers
+log2(distinct observers per km²) = 0.01·v − 15.01   otherwise
+```
+
+**Memory.** Nothing grows with the size of the snapshot except the
+observer tables, which keep each observer as a 64-bit hash of the
+name, a few million per dataset. Each reader thread decodes 16,384
+records at a time, holding about a megabyte of each column, and passes
+its (observer, pixel) pairs on in sorted pieces of at most 128 Ki.
+These go through the same external sort as node density, which spills
+a sorted run to `--workdir` once `--run-size` (32 Mi pairs, so 256 MB)
+are held for all layers together, merging the pieces rather than
+copying them together. A full run of the October 2026 snapshot with 32
+threads took 18 minutes on four CPUs and peaked at 1.2 GB of
+memory, against 2.4 GB for a first version that read whole column
+chunks. On Linux we cap glibc at two malloc arenas, which saved about
+a third; set `MALLOC_ARENA_MAX` to override.
+
+**Output.** The three files come to about 79 MB together. Their
+`Copyright` tag, data BOM and `datapackage.json` give the attribution
+that GBIF asks for: the dataset's contributors, its title and DOI.
+
 ## Tests
 
 `cargo test` runs unit tests and end-to-end tests on a small extract
 around Zug, on a tiny dump in Nominatim's format, and on two small GTFS
 feeds served over HTTP, through the cache while the server is up,
-unchanged and down. A smoke test on Liechtenstein from Geofabrik runs for
+unchanged and down, and on small Parquet files laid out like GBIF's,
+served from a fake S3 bucket. A smoke test on Liechtenstein from Geofabrik runs for
 release tags and on demand (see `.github/workflows/smoke-test.yml`);
 locally, point `OSMSIGNALS_SMOKE_PBF` at any extract to run it. It also
 republishes the real Nominatim raster and checks the result with GDAL.
@@ -332,6 +412,8 @@ Code: [MIT](LICENSE). Output data is derived from OpenStreetMap,
 © OpenStreetMap contributors, available under the
 [Open Database License](https://www.openstreetmap.org/copyright).
 The secondary importance raster is made by Nominatim from OpenStreetMap
-areas and Wikipedia link counts.
+areas and Wikipedia link counts. The naturalist observer files are not
+derived from OpenStreetMap; each states its own license (CC BY 4.0 or
+CC BY-NC 4.0) and attribution.
 `tests/data/zugerland.osm.pbf` is an OpenStreetMap extract (ODbL),
 taken from [brawer/osmdiffs](https://github.com/brawer/osmdiffs).

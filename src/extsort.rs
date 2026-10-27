@@ -15,34 +15,60 @@ use std::collections::BinaryHeap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempPath};
 
 /// A sorted run of `(key, count)` pairs, stored in a temporary file.
 pub struct Run {
-    file: NamedTempFile,
+    /// Deleted when dropped. Not kept open, so runs cost no file
+    /// handles while they wait to be merged.
+    file: TempPath,
     pub len: u64,
 }
 
 /// Sorts `keys`, counts duplicates and writes them as a run.
 pub fn write_run(keys: &mut [u64], tmpdir: &Path) -> Result<Run> {
     keys.sort_unstable();
+    write_sorted(keys.iter().map(|&k| Ok((k, 1))), tmpdir)
+}
+
+/// Writes the keys of several sorted slices as one run, counting
+/// duplicates within and across them. Unlike concatenating them for
+/// [`write_run`], this needs no memory beyond the slices themselves.
+pub fn write_merged(parts: &[Vec<u64>], tmpdir: &Path) -> Result<Run> {
+    debug_assert!(parts.iter().all(|p| p.is_sorted()));
+    let mut heap: BinaryHeap<Reverse<(u64, usize, usize)>> = parts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.first().map(|&k| Reverse((k, i, 0))))
+        .collect();
+    let keys = std::iter::from_fn(|| {
+        let Reverse((key, i, j)) = heap.pop()?;
+        if let Some(&next) = parts[i].get(j + 1) {
+            heap.push(Reverse((next, i, j + 1)));
+        }
+        Some(Ok((key, 1)))
+    });
+    write_sorted(keys, tmpdir)
+}
+
+/// Writes `(key, count)` pairs that come in key order as a run,
+/// summing the counts of equal keys.
+fn write_sorted(keys: impl Iterator<Item = Result<(u64, u64)>>, tmpdir: &Path) -> Result<Run> {
     let file = NamedTempFile::new_in(tmpdir).context("creating run file")?;
     let mut enc = zstd::Encoder::new(BufWriter::with_capacity(1 << 20, file.reopen()?), 1)?;
     let mut buf = Vec::with_capacity(1 << 16);
     let mut prev = 0u64;
     let mut len = 0u64;
-    let mut i = 0;
-    while i < keys.len() {
-        let key = keys[i];
-        let mut j = i + 1;
-        while j < keys.len() && keys[j] == key {
-            j += 1;
+    let mut keys = keys.peekable();
+    while let Some(next) = keys.next() {
+        let (key, mut count) = next?;
+        while let Some(Ok((_, c))) = keys.next_if(|n| matches!(n, Ok((k, _)) if *k == key)) {
+            count += c;
         }
         put_varint(&mut buf, key - prev);
-        put_varint(&mut buf, (j - i) as u64);
+        put_varint(&mut buf, count);
         prev = key;
         len += 1;
-        i = j;
         if buf.len() >= (1 << 16) - 32 {
             enc.write_all(&buf)?;
             buf.clear();
@@ -50,15 +76,42 @@ pub fn write_run(keys: &mut [u64], tmpdir: &Path) -> Result<Run> {
     }
     enc.write_all(&buf)?;
     enc.finish()?.flush()?;
-    Ok(Run { file, len })
+    Ok(Run {
+        file: file.into_temp_path(),
+        len,
+    })
 }
 
+/// Most runs that [`merge`] reads at once. Each costs an open file and
+/// about half a megabyte of buffers.
+const MAX_FAN_IN: usize = 64;
+
 /// Streams the union of `runs` in key order, summing counts of equal keys.
-pub fn merge(runs: Vec<Run>) -> Result<Merger> {
+/// Beyond [`MAX_FAN_IN`] runs, merges groups of them into longer runs
+/// first, next to where they are.
+pub fn merge(mut runs: Vec<Run>) -> Result<Merger> {
+    while runs.len() > MAX_FAN_IN {
+        let dir = runs[0]
+            .file
+            .parent()
+            .context("run file has no directory")?
+            .to_path_buf();
+        let mut merged = Vec::with_capacity(runs.len().div_ceil(MAX_FAN_IN));
+        while !runs.is_empty() {
+            let rest = runs.split_off(runs.len().min(MAX_FAN_IN));
+            let group = std::mem::replace(&mut runs, rest);
+            merged.push(write_sorted(merge_runs(group)?, &dir)?);
+        }
+        runs = merged;
+    }
+    merge_runs(runs)
+}
+
+fn merge_runs(runs: Vec<Run>) -> Result<Merger> {
     let mut readers = Vec::with_capacity(runs.len());
     let mut heap = BinaryHeap::with_capacity(runs.len());
     for run in runs {
-        let file = File::open(run.file.path())?;
+        let file = File::open(&run.file)?;
         let mut r = RunReader {
             dec: zstd::Decoder::with_buffer(BufReader::with_capacity(1 << 18, file))?,
             prev: 0,
@@ -77,7 +130,7 @@ struct RunReader {
     dec: zstd::Decoder<'static, BufReader<File>>,
     prev: u64,
     remaining: u64,
-    _file: NamedTempFile,
+    _file: TempPath,
 }
 
 impl RunReader {
@@ -183,6 +236,30 @@ mod tests {
         let got: Vec<(u64, u64)> = merge(runs).unwrap().map(|r| r.unwrap()).collect();
         let want: Vec<(u64, u64)> = expected.into_iter().collect();
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn writes_merged_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        let parts = vec![vec![1, 3, 3, 9], vec![], vec![0, 3, 10], vec![9]];
+        let run = write_merged(&parts, dir.path()).unwrap();
+        assert_eq!(run.len, 5);
+        let got: Vec<(u64, u64)> = merge(vec![run]).unwrap().map(Result::unwrap).collect();
+        assert_eq!(got, [(0, 1), (1, 1), (3, 3), (9, 2), (10, 1)]);
+    }
+
+    #[test]
+    fn merges_more_runs_than_it_opens_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let n = MAX_FAN_IN * MAX_FAN_IN + 3;
+        let runs: Vec<Run> = (0..n as u64)
+            .map(|i| write_run(&mut [i % 100, 1000 + i], dir.path()).unwrap())
+            .collect();
+        let got: Vec<(u64, u64)> = merge(runs).unwrap().map(Result::unwrap).collect();
+        assert_eq!(got.len(), 100 + n);
+        assert_eq!(got[0], (0, n.div_ceil(100) as u64));
+        assert!(got[100..].iter().all(|&(_, c)| c == 1));
+        assert!(got.is_sorted());
     }
 
     #[test]

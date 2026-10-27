@@ -40,6 +40,60 @@ pub fn agent() -> ureq::Agent {
         .into()
 }
 
+/// Fetches a whole small body, or with `range = Some((start, len))`
+/// just those bytes, retrying network errors and server errors with
+/// exponential backoff. For range requests, fails unless the server
+/// answers 206 Partial Content with exactly `len` bytes.
+pub fn get(agent: &ureq::Agent, url: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>> {
+    let mut backoff = Duration::from_secs(1);
+    let mut attempt = 1;
+    loop {
+        match get_once(agent, url, range) {
+            Ok(body) => return Ok(body),
+            Err(e) if attempt >= MAX_ATTEMPTS || !retryable(&e) => {
+                return Err(e).with_context(|| format!("fetching {url}"));
+            }
+            Err(e) => {
+                eprintln!("fetching {url}: {e:#}; retrying in {backoff:?}");
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(Duration::from_secs(60));
+                attempt += 1;
+            }
+        }
+    }
+}
+
+fn get_once(agent: &ureq::Agent, url: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>> {
+    let mut req = agent.get(url);
+    if let Some((start, len)) = range {
+        anyhow::ensure!(len > 0, "empty range");
+        req = req.header(header::RANGE, format!("bytes={start}-{}", start + len - 1));
+    }
+    let resp = req.call()?;
+    if range.is_some() && resp.status() != StatusCode::PARTIAL_CONTENT {
+        bail!("expected 206 Partial Content, got {}", resp.status());
+    }
+    let mut body = Vec::new();
+    resp.into_body().into_reader().read_to_end(&mut body)?;
+    if let Some((_, len)) = range {
+        anyhow::ensure!(
+            body.len() as u64 == len,
+            "got {} bytes instead of {len}",
+            body.len()
+        );
+    }
+    Ok(body)
+}
+
+/// Whether a failed request is worth trying again: network trouble and
+/// server errors are, client errors such as 404 are not.
+fn retryable(e: &anyhow::Error) -> bool {
+    match e.downcast_ref::<ureq::Error>() {
+        Some(ureq::Error::StatusCode(code)) => *code >= 500 || *code == 429,
+        _ => true,
+    }
+}
+
 /// Reads the body of a URL, reconnecting with a `Range` request when
 /// the connection breaks. Later requests go to the URL the first one
 /// was redirected to, and carry `If-Match` with its ETag, so a file

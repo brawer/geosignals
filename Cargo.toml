@@ -11,6 +11,7 @@ repository = "https://github.com/brawer/osmsignals"
 
 [dependencies]
 anyhow = "1.0.104"
+bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
 crossbeam-channel = "0.5.17"
 csv = "1.4.0"
@@ -18,6 +19,7 @@ fast_hilbert = "2.1.0"
 flate2 = "1.1.10"
 memmap2 = "0.9.12"
 osmpbf = "0.3.8"
+parquet = { version = "60.0.0", default-features = false, features = ["snap"] }
 ring = "0.17.14"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 tar = { version = "0.4.46", default-features = false }
@@ -29,3 +31,6 @@ zstd = "0.14.3"
 [dev-dependencies]
 approx = "0.5.1"
 tempfile = "3.27.0"
+
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2.191"

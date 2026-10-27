@@ -34,6 +34,33 @@ const SERIAL_NAMESPACE: [u8; 16] = [
     0x3b, 0xfe, 0xa3, 0xc0, 0xa1, 0x58, 0x5d, 0xcd, 0x82, 0x43, 0xee, 0xbe, 0x86, 0xde, 0xdc, 0x1a,
 ];
 
+/// The license of an output file.
+#[derive(Debug, PartialEq, Eq)]
+pub struct License {
+    /// SPDX identifier.
+    pub id: &'static str,
+    pub url: &'static str,
+    pub title: &'static str,
+}
+
+pub const ODBL: License = License {
+    id: "ODbL-1.0",
+    url: ODBL_URL,
+    title: "Open Data Commons Open Database License v1.0",
+};
+
+pub const CC_BY_4_0: License = License {
+    id: "CC-BY-4.0",
+    url: "https://creativecommons.org/licenses/by/4.0/",
+    title: "Creative Commons Attribution 4.0 International",
+};
+
+pub const CC_BY_NC_4_0: License = License {
+    id: "CC-BY-NC-4.0",
+    url: "https://creativecommons.org/licenses/by-nc/4.0/",
+    title: "Creative Commons Attribution-NonCommercial 4.0 International",
+};
+
 /// Who publishes an input.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Supplier {
@@ -166,6 +193,7 @@ pub struct SourcesRun<'a> {
     pub run_id: &'a str,
     /// Copyright statement for the output.
     pub copyright: &'a str,
+    pub license: &'a License,
 }
 
 /// Writes the BOM for an output made from many sources.
@@ -178,6 +206,7 @@ pub fn write_sources(run: &SourcesRun, output: &Hashes) -> Result<PathBuf> {
             description: run.description,
             run_id: run.run_id,
             copyright: run.copyright,
+            license: run.license,
         },
         &output.sha256,
         &output.sha512,
@@ -264,7 +293,7 @@ fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
             "name": source.name,
             "url": [source.url],
         },
-        "licenses": license(),
+        "licenses": license(&ODBL),
         "copyright": OSM_COPYRIGHT,
         "purl": purl,
         "data": [input_data],
@@ -284,6 +313,7 @@ fn build(run: &Run, sha256: &str, sha512: &str) -> Value {
             description: run.description,
             run_id: run.run_id,
             copyright: OSM_COPYRIGHT,
+            license: &ODBL,
         },
         sha256,
         sha512,
@@ -299,6 +329,7 @@ struct Doc<'a> {
     run_id: &'a str,
     /// Copyright of the output, from its inputs.
     copyright: &'a str,
+    license: &'a License,
 }
 
 fn document(doc: &Doc, sha256: &str, sha512: &str, components: Vec<Value>) -> Value {
@@ -343,7 +374,7 @@ fn document(doc: &Doc, sha256: &str, sha512: &str, components: Vec<Value>) -> Va
                 "version": anchor,
                 "description": doc.description,
                 "supplier": supplier(),
-                "licenses": license(),
+                "licenses": license(doc.license),
                 "copyright": doc.copyright,
                 "hashes": [
                     {"alg": "SHA-256", "content": sha256},
@@ -352,7 +383,7 @@ fn document(doc: &Doc, sha256: &str, sha512: &str, components: Vec<Value>) -> Va
                 "data": [{"type": "dataset"}],
                 "externalReferences": [
                     {"type": "documentation", "url": format!("{REPO_URL}#readme")},
-                    {"type": "license", "url": ODBL_URL},
+                    {"type": "license", "url": doc.license.url},
                 ],
             },
         },
@@ -379,8 +410,8 @@ fn supplier() -> Value {
     json!({"name": "Sascha Brawer", "url": ["https://brawer.ch"]})
 }
 
-fn license() -> Value {
-    json!([{"license": {"id": "ODbL-1.0", "url": ODBL_URL, "acknowledgement": "declared"}}])
+fn license(l: &License) -> Value {
+    json!([{"license": {"id": l.id, "url": l.url, "acknowledgement": "declared"}}])
 }
 
 /// Size and digests of a file, as lowercase hex.
