@@ -22,6 +22,8 @@ allow = [
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
   "BSD-3-Clause",
+  # Public-domain dedication, e.g. tiny-keccak.
+  "CC0-1.0",
   # webpki-roots: Mozilla's CA list, under a permissive data license.
   "CDLA-Permissive-2.0",
   # ring, rustls-webpki, untrusted.
@@ -31,11 +33,6 @@ allow = [
   "Zlib",
 ]
 confidence-threshold = 0.8
-exceptions = [
-  # Public-domain dedication. Only reached through parquet's ahash on
-  # wasm32 (ahash/compile-time-rng -> const-random), never in our builds.
-  { allow = ["CC0-1.0"], crate = "tiny-keccak" },
-]
 
 # ── bans: banned crates, duplicate-version bloat, wildcard versions ─────────
 [bans]
