@@ -18,9 +18,10 @@
 //! and the duplicate detection need, and it is about 10 times smaller
 //! than the feed, so we cache it; see [`Condensed::encode`].
 
+use crate::slab::{Record, Slab, Writer};
 use crate::tile;
 use anyhow::{Context, Result, bail, ensure};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 
@@ -46,11 +47,12 @@ pub struct Condensed {
     pub first_day: i64,
     pub last_day: i64,
     pub agencies: Vec<String>,
-    pub trips: Vec<Trip>,
+    pub trips: Slab<Trip>,
     /// Departures of all trips, one trip after the other.
-    pub stops: Vec<Stop>,
+    pub stops: Slab<Stop>,
 }
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Trip {
     /// Index into [`Condensed::agencies`].
@@ -64,6 +66,7 @@ pub struct Trip {
     pub len: u32,
 }
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stop {
     /// Zoom-18 pixel.
@@ -72,6 +75,30 @@ pub struct Stop {
     /// Minutes after midnight of the service day, which may exceed
     /// 24 hours; or [`NO_TIME`].
     pub minute: u16,
+}
+
+// SAFETY: both are repr(C) with integer fields; `write` fills every
+// byte, padding included, at the offsets of the fields.
+unsafe impl Record for Trip {
+    const SIZE: usize = 16;
+    fn write(&self, out: &mut [u8]) {
+        out[0..4].copy_from_slice(&self.agency.to_ne_bytes());
+        out[4..6].copy_from_slice(&self.route_type.to_ne_bytes());
+        out[6] = self.days;
+        out[7] = 0;
+        out[8..12].copy_from_slice(&self.start.to_ne_bytes());
+        out[12..16].copy_from_slice(&self.len.to_ne_bytes());
+    }
+}
+
+unsafe impl Record for Stop {
+    const SIZE: usize = 12;
+    fn write(&self, out: &mut [u8]) {
+        out[0..4].copy_from_slice(&self.x.to_ne_bytes());
+        out[4..8].copy_from_slice(&self.y.to_ne_bytes());
+        out[8..10].copy_from_slice(&self.minute.to_ne_bytes());
+        out[10..12].fill(0);
+    }
 }
 
 impl Condensed {
@@ -89,7 +116,10 @@ impl Condensed {
 
     /// Serializes to a compact, zstd-compressed binary form.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        let mut b = Vec::with_capacity(self.stops.len() * 5 + 1024);
+        use std::io::Write;
+        // Compressed as we go, so a big feed never sits uncompressed in memory.
+        let mut z = zstd::Encoder::new(Vec::new(), 9)?;
+        let mut b = Vec::with_capacity(1 << 16);
         b.extend_from_slice(MAGIC);
         b.push(VERSION);
         put_signed(&mut b, self.week_start);
@@ -99,6 +129,8 @@ impl Condensed {
         for a in &self.agencies {
             put_varint(&mut b, a.len() as u64);
             b.extend_from_slice(a.as_bytes());
+            z.write_all(&b)?;
+            b.clear();
         }
         put_varint(&mut b, self.trips.len() as u64);
         let (mut px, mut py) = (0i64, 0i64);
@@ -113,13 +145,25 @@ impl Condensed {
                 (px, py) = (i64::from(s.x), i64::from(s.y));
                 put_varint(&mut b, (u64::from(s.minute) + 1) & 0xffff);
             }
+            if b.len() >= (1 << 16) - 1024 {
+                z.write_all(&b)?;
+                b.clear();
+            }
         }
-        Ok(zstd::encode_all(b.as_slice(), 9)?)
+        z.write_all(&b)?;
+        Ok(z.finish()?)
     }
 
     pub fn decode(data: &[u8]) -> Result<Condensed> {
-        let raw = zstd::decode_all(data)?;
-        let mut r = Reader { b: &raw, pos: 0 };
+        Self::decode_in(data, None)
+    }
+
+    /// Like [`decode`](Self::decode), keeping trips and stops in
+    /// memory-mapped files in `scratch`, if given.
+    pub fn decode_in(data: &[u8], scratch: Option<&Path>) -> Result<Condensed> {
+        let mut r = Reader {
+            r: std::io::BufReader::with_capacity(1 << 16, zstd::stream::read::Decoder::new(data)?),
+        };
         ensure!(r.bytes(8)? == MAGIC, "not a condensed GTFS feed");
         let version = r.byte()?;
         ensure!(
@@ -134,17 +178,18 @@ impl Condensed {
         };
         for _ in 0..r.varint()? {
             let len = r.varint()? as usize;
-            c.agencies.push(String::from_utf8(r.bytes(len)?.to_vec())?);
+            c.agencies.push(String::from_utf8(r.bytes(len)?)?);
         }
         let (mut px, mut py) = (0i64, 0i64);
         let max = (1i64 << tile::PIXEL_ZOOM) - 1;
+        let (mut trips, mut stops) = (Writer::new(scratch)?, Writer::new(scratch)?);
         for _ in 0..r.varint()? {
             let agency = u32::try_from(r.varint()?)?;
             ensure!((agency as usize) < c.agencies.len().max(1), "bad agency");
             let route_type = u16::try_from(r.varint()?)?;
             let days = r.byte()?;
             let len = u32::try_from(r.varint()?)?;
-            let start = u32::try_from(c.stops.len())?;
+            let start = u32::try_from(stops.len())?;
             for _ in 0..len {
                 px += r.signed()?;
                 py += r.signed()?;
@@ -158,21 +203,23 @@ impl Condensed {
                 } else {
                     u16::try_from(m - 1)?
                 };
-                c.stops.push(Stop {
+                stops.push(Stop {
                     x: px as u32,
                     y: py as u32,
                     minute,
-                });
+                })?;
             }
-            c.trips.push(Trip {
+            trips.push(Trip {
                 agency,
                 route_type,
                 days,
                 start,
                 len,
-            });
+            })?;
         }
-        ensure!(r.pos == raw.len(), "trailing data");
+        ensure!(r.at_end()?, "trailing data");
+        c.trips = trips.finish()?;
+        c.stops = stops.finish()?;
         Ok(c)
     }
 }
@@ -189,19 +236,26 @@ fn put_signed(b: &mut Vec<u8>, v: i64) {
     put_varint(b, ((v << 1) ^ (v >> 63)) as u64);
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    pos: usize,
+/// Reads the decompressed stream, without holding all of it.
+struct Reader<R> {
+    r: std::io::BufReader<R>,
 }
 
-impl Reader<'_> {
-    fn bytes(&mut self, n: usize) -> Result<&[u8]> {
-        ensure!(self.pos + n <= self.b.len(), "truncated");
-        self.pos += n;
-        Ok(&self.b[self.pos - n..self.pos])
+impl<R: Read> Reader<R> {
+    fn bytes(&mut self, n: usize) -> Result<Vec<u8>> {
+        ensure!(n <= 1 << 16, "corrupt length {n}");
+        let mut buf = vec![0; n];
+        self.r.read_exact(&mut buf).context("truncated")?;
+        Ok(buf)
     }
     fn byte(&mut self) -> Result<u8> {
-        Ok(self.bytes(1)?[0])
+        let mut b = [0u8];
+        self.r.read_exact(&mut b).context("truncated")?;
+        Ok(b[0])
+    }
+    fn at_end(&mut self) -> Result<bool> {
+        use std::io::BufRead;
+        Ok(self.r.fill_buf()?.is_empty())
     }
     fn varint(&mut self) -> Result<u64> {
         let mut v = 0u64;
@@ -353,6 +407,12 @@ impl CalendarRule {
 
 /// Condenses the GTFS zip at `path`.
 pub fn condense(path: &Path) -> Result<Condensed> {
+    condense_in(path, None)
+}
+
+/// Like [`condense`], keeping the large arrays in memory-mapped files
+/// in `scratch`, if given, instead of on the heap.
+pub fn condense_in(path: &Path, scratch: Option<&Path>) -> Result<Condensed> {
     let mut feed = Feed::open(path)?;
     for name in ["trips.txt", "stop_times.txt", "stops.txt"] {
         ensure!(feed.has(name), "no {name}");
@@ -434,14 +494,15 @@ pub fn condense(path: &Path) -> Result<Condensed> {
             );
         })?;
     }
-    let mut exceptions: Vec<(u32, i64, bool)> = Vec::new(); // (service, day, added)
+    // Some feeds have ten million of these, so they are packed into
+    // eight bytes each; see `Exception`.
+    let mut exceptions: Vec<Exception> = Vec::new();
     if let Some(mut t) = feed.table("calendar_dates.txt")? {
         let (id, date, typ) = (
             t.require("service_id")?,
             t.col("date"),
             t.col("exception_type"),
         );
-        let mut seen = HashSet::new();
         t.for_each(|r| {
             let Some(day) = parse_date(field(r, date)) else {
                 return;
@@ -452,10 +513,11 @@ pub fn condense(path: &Path) -> Result<Condensed> {
                 _ => return,
             };
             let svc = intern(field(r, Some(id)));
-            if seen.insert((svc, day)) {
-                exceptions.push((svc, day, added));
-            }
+            exceptions.push(Exception::new(svc, day, added));
         })?;
+        // For a service and day listed twice, the first entry counts.
+        exceptions.sort_by_key(|e| e.0 >> 1); // stable
+        exceptions.dedup_by_key(|e| e.0 >> 1);
     }
 
     // Trips.
@@ -532,13 +594,13 @@ pub fn condense(path: &Path) -> Result<Condensed> {
         .values()
         .filter(|r| r.weekdays != 0)
         .map(|r| r.start)
-        .chain(exceptions.iter().filter(|e| e.2).map(|e| e.1))
+        .chain(exceptions.iter().filter(|e| e.added()).map(|e| e.day()))
         .min();
     let last_day = rules
         .values()
         .filter(|r| r.weekdays != 0)
         .map(|r| r.end)
-        .chain(exceptions.iter().filter(|e| e.2).map(|e| e.1))
+        .chain(exceptions.iter().filter(|e| e.added()).map(|e| e.day()))
         .max();
     let (Some(first_day), Some(last_day)) = (first_day, last_day) else {
         return Ok(Condensed {
@@ -560,7 +622,7 @@ pub fn condense(path: &Path) -> Result<Condensed> {
             }
         }
     }
-    for &(svc, day, added) in &exceptions {
+    for (svc, day, added) in exceptions.iter().map(Exception::get) {
         if !(first_day..=hi).contains(&day) {
             continue;
         }
@@ -584,7 +646,7 @@ pub fn condense(path: &Path) -> Result<Condensed> {
             }
         }
     }
-    for &(svc, day, added) in &exceptions {
+    for (svc, day, added) in exceptions.iter().map(Exception::get) {
         let i = day - week_start;
         if (0..7).contains(&i) {
             if added {
@@ -596,7 +658,8 @@ pub fn condense(path: &Path) -> Result<Condensed> {
     }
 
     // Stop locations, falling back to the parent station's.
-    let mut stop_pixel: HashMap<String, (u32, u32)> = HashMap::new();
+    let mut stop_index: HashMap<String, u32> = HashMap::new();
+    let mut pixels: Vec<(u32, u32)> = Vec::new();
     {
         let mut parents: Vec<(String, String)> = Vec::new();
         let mut t = feed.table("stops.txt")?.expect("checked above");
@@ -614,7 +677,8 @@ pub fn condense(path: &Path) -> Result<Condensed> {
                 .zip(field(r, lon).parse::<f64>().ok());
             match coords.and_then(|(lat, lon)| tile::pixel_xy(lon, lat)) {
                 Some(p) if coords != Some((0.0, 0.0)) => {
-                    stop_pixel.insert(key, p);
+                    stop_index.insert(key, pixels.len() as u32);
+                    pixels.push(p);
                 }
                 _ => {
                     let p = field(r, parent);
@@ -625,22 +689,15 @@ pub fn condense(path: &Path) -> Result<Condensed> {
             }
         })?;
         for (stop, parent) in parents {
-            if let Some(&p) = stop_pixel.get(&parent) {
-                stop_pixel.insert(stop, p);
+            if let Some(&p) = stop_index.get(&parent) {
+                stop_index.insert(stop, p);
             }
         }
     }
 
-    // Stop times of the trips that run in the median week.
-    struct Event {
-        trip: u32,
-        seq: u32,
-        x: u32,
-        y: u32,
-        minute: u16,
-        pickup: bool,
-    }
-    let mut events: Vec<Event> = Vec::new();
+    // Stop times of the trips that run in the median week. A big feed
+    // has tens of millions, so they go to a scratch file, if given.
+    let mut events = Writer::new(scratch)?;
     {
         let mut t = feed.table("stop_times.txt")?.expect("checked above");
         let (trip, stop, seq, dep, arr, pickup) = (
@@ -651,37 +708,41 @@ pub fn condense(path: &Path) -> Result<Condensed> {
             t.col("arrival_time"),
             t.col("pickup_type"),
         );
+        let mut result = Ok(());
         t.for_each(|r| {
+            if result.is_err() {
+                return;
+            }
             let Some(&ti) = trip_index.get(field(r, Some(trip))) else {
                 return;
             };
             if service_days[trips[ti as usize].service as usize] == 0 {
                 return;
             }
-            let Some(&(x, y)) = stop_pixel.get(field(r, Some(stop))) else {
+            let Some(&si) = stop_index.get(field(r, Some(stop))) else {
                 return;
             };
             let time = parse_time(field(r, dep)).or_else(|| parse_time(field(r, arr)));
             let minute = time.map_or(NO_TIME, |s| (s / 60).min(u32::from(NO_TIME) - 1) as u16);
-            events.push(Event {
+            result = events.push(Event {
                 trip: ti,
                 seq: field(r, seq).parse().unwrap_or(0),
-                x,
-                y,
+                stop: si,
                 minute,
-                pickup: field(r, pickup) != "1",
+                pickup: u8::from(field(r, pickup) != "1"),
             });
         })?;
+        result?;
     }
-    events.sort_unstable_by_key(|e| (e.trip, e.seq));
+    drop(stop_index);
+    drop(trip_index);
+    let mut events = events.finish()?;
+    events
+        .as_mut_slice()
+        .sort_unstable_by_key(|e| (e.trip, e.seq));
 
-    let mut out = Condensed {
-        week_start,
-        first_day,
-        last_day,
-        agencies,
-        ..Condensed::default()
-    };
+    let mut out_trips = Writer::new(scratch)?;
+    let mut out_stops = Writer::new(scratch)?;
     let mut template: Vec<Stop> = Vec::new();
     for group in events.chunk_by(|a, b| a.trip == b.trip) {
         let info = &trips[group[0].trip as usize];
@@ -691,29 +752,34 @@ pub fn condense(path: &Path) -> Result<Condensed> {
         template.extend(
             group[..group.len() - 1]
                 .iter()
-                .filter(|e| e.pickup)
-                .map(|e| Stop {
-                    x: e.x,
-                    y: e.y,
-                    minute: e.minute,
+                .filter(|e| e.pickup != 0)
+                .map(|e| {
+                    let (x, y) = pixels[e.stop as usize];
+                    Stop {
+                        x,
+                        y,
+                        minute: e.minute,
+                    }
                 }),
         );
         if template.is_empty() {
             continue;
         }
-        let mut push = |stops: &mut dyn Iterator<Item = Stop>| {
-            let start = out.stops.len() as u32;
-            out.stops.extend(stops);
-            out.trips.push(Trip {
+        let mut push = |stops: &mut dyn Iterator<Item = Stop>| -> Result<()> {
+            let start = u32::try_from(out_stops.len())?;
+            for s in stops {
+                out_stops.push(s)?;
+            }
+            out_trips.push(Trip {
                 agency: info.agency,
                 route_type: info.route_type,
                 days,
                 start,
-                len: out.stops.len() as u32 - start,
-            });
+                len: u32::try_from(out_stops.len())? - start,
+            })
         };
         match frequencies.get(&group[0].trip) {
-            None => push(&mut template.iter().copied()),
+            None => push(&mut template.iter().copied())?,
             Some(windows) => {
                 let base = template
                     .iter()
@@ -732,14 +798,73 @@ pub fn condense(path: &Path) -> Result<Condensed> {
                                     as u16
                             },
                             ..*st
-                        }));
+                        }))?;
                         t += h;
                     }
                 }
             }
         }
     }
-    Ok(out)
+    Ok(Condensed {
+        week_start,
+        first_day,
+        last_day,
+        agencies,
+        trips: out_trips.finish()?,
+        stops: out_stops.finish()?,
+    })
+}
+
+/// An entry of `calendar_dates.txt`: service, day and whether service
+/// is added (or removed) that day, packed as `service << 33 | (day +
+/// 2³¹) << 1 | added`.
+#[derive(Clone, Copy)]
+struct Exception(u64);
+
+impl Exception {
+    fn new(service: u32, day: i64, added: bool) -> Self {
+        // parse_date only gives years 0 to 9999, which fit.
+        let day = (day + (1 << 31)) as u64 & 0xffff_ffff;
+        Exception(u64::from(service) << 33 | day << 1 | u64::from(added))
+    }
+    fn service(&self) -> u32 {
+        (self.0 >> 33) as u32
+    }
+    fn day(&self) -> i64 {
+        ((self.0 >> 1) & 0xffff_ffff) as i64 - (1 << 31)
+    }
+    fn added(&self) -> bool {
+        self.0 & 1 != 0
+    }
+    fn get(&self) -> (u32, i64, bool) {
+        (self.service(), self.day(), self.added())
+    }
+}
+
+/// A stop time of a trip in the median week, while condensing.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Event {
+    trip: u32,
+    seq: u32,
+    /// Index into the stop pixels.
+    stop: u32,
+    minute: u16,
+    /// 1 if passengers can board here.
+    pickup: u8,
+}
+
+// SAFETY: repr(C) with integer fields; `write` fills all 16 bytes.
+unsafe impl Record for Event {
+    const SIZE: usize = 16;
+    fn write(&self, out: &mut [u8]) {
+        out[0..4].copy_from_slice(&self.trip.to_ne_bytes());
+        out[4..8].copy_from_slice(&self.seq.to_ne_bytes());
+        out[8..12].copy_from_slice(&self.stop.to_ne_bytes());
+        out[12..14].copy_from_slice(&self.minute.to_ne_bytes());
+        out[14] = self.pickup;
+        out[15] = 0;
+    }
 }
 
 /// Monday of the median week, given the number of trips on each day
@@ -834,6 +959,27 @@ mod tests {
     }
 
     #[test]
+    fn packs_exceptions() {
+        for (svc, day, added) in [
+            (0, 0, true),
+            (7, -719_528, false),
+            (u32::MAX >> 1, 2_932_896, true),
+        ] {
+            assert_eq!(Exception::new(svc, day, added).get(), (svc, day, added));
+        }
+        // The first entry for a service and day wins.
+        let mut e = vec![
+            Exception::new(2, 20_000, false),
+            Exception::new(1, 20_001, true),
+            Exception::new(2, 20_000, true),
+        ];
+        e.sort_by_key(|e| e.0 >> 1);
+        e.dedup_by_key(|e| e.0 >> 1);
+        let got: Vec<_> = e.iter().map(Exception::get).collect();
+        assert_eq!(got, [(1, 20_001, true), (2, 20_000, false)]);
+    }
+
+    #[test]
     fn encode_round_trip() {
         let c = Condensed {
             week_start: 20_000,
@@ -855,7 +1001,8 @@ mod tests {
                     start: 2,
                     len: 1,
                 },
-            ],
+            ]
+            .into(),
             stops: vec![
                 Stop {
                     x: 137_000,
@@ -872,7 +1019,8 @@ mod tests {
                     y: (1 << 18) - 1,
                     minute: 1500,
                 },
-            ],
+            ]
+            .into(),
         };
         let data = c.encode().unwrap();
         assert_eq!(Condensed::decode(&data).unwrap(), c);

@@ -16,6 +16,7 @@ crossbeam-channel = "0.5.17"
 csv = "1.4.0"
 fast_hilbert = "2.1.0"
 flate2 = "1.1.10"
+memmap2 = "0.9.12"
 osmpbf = "0.3.8"
 ring = "0.17.14"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
