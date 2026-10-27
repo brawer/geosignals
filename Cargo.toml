@@ -19,6 +19,7 @@ flate2 = "1.1.10"
 osmpbf = "0.3.8"
 ring = "0.17.14"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tar = { version = "0.4.46", default-features = false }
 tempfile = "3.27.0"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 zip = { version = "9.1.1", default-features = false, features = ["deflate-flate2"] }

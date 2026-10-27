@@ -81,14 +81,16 @@ enum Command {
     /// Counts public transport departures per day from the GTFS feeds
     /// that Transitous lists, as a Cloud-Optimized GeoTIFF.
     TransitDepartures {
-        /// The `feeds` directory of a checkout of
-        /// https://github.com/public-transport/transitous.
-        #[arg(long)]
-        feeds: PathBuf,
-        /// A checkout of https://github.com/transitland/transitland-atlas,
-        /// for feeds that Transitous takes from there.
-        #[arg(long)]
-        transitland_atlas: Option<PathBuf>,
+        /// The Transitous feed catalog: the URL of a tarball of the
+        /// repository, a local tarball, or a checkout. Downloads are cached
+        /// like feeds, so a run still works when GitHub is down.
+        #[arg(long, default_value = osmsignals::transit::TRANSITOUS_URL)]
+        transitous: String,
+        /// The Transitland Atlas, for feeds that Transitous takes from
+        /// there: a URL, a local tarball, or a checkout. "none" skips
+        /// those feeds.
+        #[arg(long, default_value = osmsignals::transit::TRANSITLAND_ATLAS_URL)]
+        transitland_atlas: String,
         /// The Mobility Database export, as a file or URL, for feeds that
         /// Transitous takes from there. "none" skips those feeds.
         #[arg(long, default_value = osmsignals::transit::MOBILITY_DATABASE_CSV)]
@@ -191,7 +193,7 @@ fn main() -> Result<()> {
             eprintln!("{summary:#?}");
         }
         Command::TransitDepartures {
-            feeds,
+            transitous,
             transitland_atlas,
             mobility_database,
             cache,
@@ -212,8 +214,8 @@ fn main() -> Result<()> {
                     .as_secs() as i64,
             };
             let cfg = osmsignals::transit::Config {
-                feeds,
-                transitland_atlas,
+                transitous,
+                transitland_atlas: Some(transitland_atlas).filter(|a| a != "none"),
                 mobility_database: Some(mobility_database).filter(|m| m != "none"),
                 cache,
                 output_dir,

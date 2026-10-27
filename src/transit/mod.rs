@@ -19,6 +19,7 @@ pub mod catalog;
 pub mod dedup;
 pub mod fetch;
 pub mod gtfs;
+pub mod repo;
 
 use crate::cog::{Grid, Metadata, Spool};
 use crate::histogram::Histogram;
@@ -48,6 +49,18 @@ const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
 /// The Mobility Database's export of its catalog.
 pub const MOBILITY_DATABASE_CSV: &str = "https://files.mobilitydatabase.org/feeds_v2.csv";
 
+/// The Transitous repository, whose `feeds/` list the feeds.
+pub const TRANSITOUS: &str = "public-transport/transitous";
+
+/// The Transitland Atlas repository.
+pub const TRANSITLAND_ATLAS: &str = "transitland/transitland-atlas";
+
+/// Tarballs of the catalogs' main branches, as `repo::github_tarball` makes them.
+pub const TRANSITOUS_URL: &str =
+    "https://github.com/public-transport/transitous/archive/refs/heads/main.tar.gz";
+pub const TRANSITLAND_ATLAS_URL: &str =
+    "https://github.com/transitland/transitland-atlas/archive/refs/heads/main.tar.gz";
+
 /// Which feeds to use, by license.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum Licenses {
@@ -59,11 +72,13 @@ pub enum Licenses {
 }
 
 pub struct Config {
-    /// The `feeds` directory of a Transitous checkout.
-    pub feeds: PathBuf,
-    /// A Transitland Atlas checkout, for sources that point into it.
-    pub transitland_atlas: Option<PathBuf>,
-    /// The Mobility Database export, as a file or URL, for sources
+    /// Transitous: the URL of a tarball of the repository, such as
+    /// [`repo::github_tarball`] makes, a local tarball, or a checkout.
+    pub transitous: String,
+    /// The Transitland Atlas, for sources that point into it; given
+    /// like `transitous`.
+    pub transitland_atlas: Option<String>,
+    /// The Mobility Database export, as a URL or file, for sources
     /// that point into it.
     pub mobility_database: Option<String>,
     /// The cache: a directory or `s3://bucket/prefix`.
@@ -113,22 +128,44 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     let day = cfg.date.div_euclid(86_400);
     let timestamp = day * 86_400;
 
+    let store = crate::store::open(&cfg.cache)?;
+    let fetcher = Fetcher {
+        store: store.as_ref(),
+        agent: crate::http::agent(),
+        tmp: workdir.tmp(),
+        offline: cfg.offline,
+        now: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64,
+        retry_delay: cfg.retry_delay,
+    };
+    let mut inputs = Vec::new();
     let mut catalogs = Catalogs::default();
-    if let Some(dir) = &cfg.transitland_atlas {
-        catalogs.load_atlas(dir)?;
+    let (transitous, input) = read_catalog(&fetcher, "transitous", &cfg.transitous)?;
+    let Data::Repo(transitous) = transitous else {
+        anyhow::bail!("{} is not a repository", cfg.transitous);
+    };
+    inputs.push(input);
+    if let Some(location) = &cfg.transitland_atlas {
+        let (data, input) = read_catalog(&fetcher, "transitland-atlas", location)?;
+        let Data::Repo(files) = data else {
+            anyhow::bail!("{location} is not a repository");
+        };
+        catalogs.load_atlas(&files)?;
+        inputs.push(input);
     }
-    if let Some(mdb) = &cfg.mobility_database {
-        let reader: Box<dyn std::io::Read> =
-            if mdb.starts_with("https://") || mdb.starts_with("http://") {
-                Box::new(crate::http::HttpReader::open(crate::http::agent(), mdb)?)
-            } else {
-                Box::new(std::fs::File::open(mdb).with_context(|| format!("opening {mdb}"))?)
-            };
+    if let Some(location) = &cfg.mobility_database {
+        let (data, input) = read_catalog(&fetcher, "mobility-database", location)?;
+        let Data::Csv(path) = data else {
+            anyhow::bail!("{location} is not a CSV file");
+        };
+        let f = std::fs::File::open(&path)?;
         catalogs
-            .load_mdb(reader)
-            .with_context(|| format!("reading {mdb}"))?;
+            .load_mdb(std::io::BufReader::new(f))
+            .with_context(|| format!("reading {location}"))?;
+        inputs.push(input);
     }
-    let (feeds, mut skipped) = catalog::load(&cfg.feeds, &catalogs)?;
+    let (feeds, mut skipped) = catalog::load(&transitous, &catalogs)?;
     let mut selected: Vec<Feed> = Vec::new();
     for f in feeds {
         if !cfg.only.is_empty() && !cfg.only.iter().any(|p| f.id.starts_with(p.as_str())) {
@@ -151,17 +188,6 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         cfg.cache
     );
 
-    let store = crate::store::open(&cfg.cache)?;
-    let fetcher = Fetcher {
-        store: store.as_ref(),
-        agent: crate::http::agent(),
-        tmp: workdir.tmp(),
-        offline: cfg.offline,
-        now: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs() as i64,
-        retry_delay: cfg.retry_delay,
-    };
     let results = fetch_all(&fetcher, &selected, cfg.threads);
     eprintln!(
         "fetched {} feeds in {:.0?}",
@@ -224,11 +250,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         summary.duplicates += duplicates;
         let mut entry = json!({
             "id": feed.id,
-            "status": match &f.status {
-                Status::Changed => "changed",
-                Status::Unchanged => "unchanged",
-                Status::Stale { .. } => "stale",
-            },
+            "status": status_name(&f.status),
             "url": f.meta.final_url,
             "fetched": crate::date::rfc3339(f.meta.fetched),
             "median_week": day_string(c.week_start),
@@ -280,18 +302,16 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     spool.write_cog(&output, &meta)?;
     let hashes = crate::bom::hash_file(&output)?;
 
-    let sources: Vec<crate::bom::Source> = used
-        .iter()
-        .map(|(feed, f)| crate::bom::Source {
-            name: fetch::key_prefix(&feed.id),
-            version: f.meta.fetched,
-            url: Some(f.meta.final_url.clone()).filter(|u| !u.is_empty()),
-            license_id: feed.license.spdx.clone(),
-            license_url: feed.license.url.clone(),
-            copyright: feed.license.attribution.clone(),
-            sha256: Some(f.meta.sha256.clone()),
-        })
-        .collect();
+    let mut sources: Vec<crate::bom::Source> = inputs.iter().map(|i| i.bom_source()).collect();
+    sources.extend(used.iter().map(|(feed, f)| crate::bom::Source {
+        name: fetch::key_prefix(&feed.id),
+        version: f.meta.fetched,
+        url: Some(f.meta.final_url.clone()).filter(|u| !u.is_empty()),
+        license_id: feed.license.spdx.clone(),
+        license_url: feed.license.url.clone(),
+        copyright: feed.license.attribution.clone(),
+        sha256: Some(f.meta.sha256.clone()),
+    }));
     summary.bom = crate::bom::write_sources(
         &crate::bom::SourcesRun {
             sources: &sources,
@@ -307,6 +327,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     summary.report = output.with_extension("report.json");
     let report = json!({
         "date": day_string(day),
+        "catalogs": inputs.iter().map(|i| i.report()).collect::<Vec<_>>(),
         "feeds": report_feeds,
         "skipped": skipped.iter().map(|s| json!({"id": s.id, "reason": s.reason})).collect::<Vec<_>>(),
         "duplicates": overlaps.iter().map(|o| json!({
@@ -322,15 +343,15 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     summary.datapackage = crate::datapackage::write_many(
         &PACKAGE,
         &crate::datapackage::ManyFiles {
-            sources: used
+            sources: sources
                 .iter()
-                .map(|(feed, f)| {
+                .map(|src| {
                     let mut s = json!({
-                        "title": feed.id,
-                        "version": crate::date::rfc3339(f.meta.fetched),
+                        "title": src.name.strip_prefix("gtfs/").unwrap_or(&src.name),
+                        "version": crate::date::rfc3339(src.version),
                     });
-                    if !f.meta.final_url.is_empty() {
-                        s["path"] = json!(f.meta.final_url);
+                    if let Some(url) = src.url.as_ref().filter(|u| !u.is_empty()) {
+                        s["path"] = json!(url);
                     }
                     s
                 })
@@ -352,6 +373,149 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         start.elapsed()
     );
     Ok(summary)
+}
+
+/// What a catalog gave, after reading.
+enum Data {
+    Repo(repo::FeedFiles),
+    /// A CSV file in the working directory.
+    Csv(PathBuf),
+}
+
+/// Which version of a catalog a run read, for the BOM and the report.
+struct CatalogInput {
+    name: &'static str,
+    location: String,
+    /// For a download: what the cache knows, and how we got it.
+    fetched: Option<(fetch::Meta, Status)>,
+    commit: Option<String>,
+    /// For a local file: when it was last modified, in seconds since the epoch.
+    modified: i64,
+}
+
+impl CatalogInput {
+    fn bom_source(&self) -> crate::bom::Source {
+        let (license_id, license_url, copyright) = match self.name {
+            "transitous" => (Some("CC0-1.0"), None, None),
+            "transitland-atlas" => (
+                Some("CC-BY-4.0"),
+                None,
+                Some("Transitland Atlas, https://www.transit.land"),
+            ),
+            _ => (None, None, None),
+        };
+        let mut url = self.location.clone();
+        if let Some(c) = &self.commit
+            && let Some(repo) = url
+                .strip_prefix("https://github.com/")
+                .and_then(|r| r.split("/archive/").next())
+                .map(str::to_string)
+        {
+            url = format!("https://github.com/{repo}/tree/{c}");
+        }
+        crate::bom::Source {
+            name: format!("catalogs/{}", self.name),
+            version: self
+                .fetched
+                .as_ref()
+                .map_or(self.modified, |(m, _)| m.fetched),
+            url: Some(url),
+            license_id: license_id.map(str::to_string),
+            license_url,
+            copyright: copyright.map(str::to_string),
+            sha256: self.fetched.as_ref().map(|(m, _)| m.sha256.clone()),
+        }
+    }
+
+    fn report(&self) -> Value {
+        let mut v = json!({"name": self.name, "location": self.location, "commit": self.commit});
+        if let Some((meta, status)) = &self.fetched {
+            v["fetched"] = json!(crate::date::rfc3339(meta.fetched));
+            v["sha256"] = json!(meta.sha256);
+            v["status"] = json!(status_name(status));
+            if let Status::Stale { error } = status {
+                v["error"] = json!(error);
+            }
+        }
+        v
+    }
+}
+
+fn status_name(s: &Status) -> &'static str {
+    match s {
+        Status::Changed => "changed",
+        Status::Unchanged => "unchanged",
+        Status::Stale { .. } => "stale",
+    }
+}
+
+/// Reads a catalog from a URL (through the cache), a tarball or CSV
+/// file, or a repository checkout.
+fn read_catalog(
+    fetcher: &Fetcher,
+    name: &'static str,
+    location: &str,
+) -> Result<(Data, CatalogInput)> {
+    let csv = name == "mobility-database";
+    let mut input = CatalogInput {
+        name,
+        location: location.to_string(),
+        fetched: None,
+        commit: None,
+        modified: 0,
+    };
+    let path = if location.starts_with("https://") || location.starts_with("http://") {
+        let file = if csv { "feeds.csv" } else { "archive.tar.gz" };
+        let path = fetcher.tmp.join(format!("catalog-{name}-{file}"));
+        let prefix = format!("catalogs/{name}");
+        let urls = [location.to_string()];
+        let src = fetch::Source {
+            prefix: &prefix,
+            file,
+            urls: &urls,
+            magic: if csv { b"" } else { &[0x1f, 0x8b] },
+            kind: if csv { "CSV file" } else { "gzipped tarball" },
+        };
+        let (meta, status) = fetcher
+            .fetch_file(&src, &path)
+            .with_context(|| format!("fetching the {name} catalog"))?;
+        if let Status::Stale { error } = &status {
+            eprintln!("{name}: using cached copy: {error}");
+        }
+        input.fetched = Some((meta, status));
+        path
+    } else {
+        let path = PathBuf::from(location);
+        input.modified = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs() as i64);
+        path
+    };
+    if csv {
+        return Ok((Data::Csv(path), input));
+    }
+    let files = if path.is_dir() {
+        repo::from_dir(&path)?
+    } else {
+        let f =
+            std::fs::File::open(&path).with_context(|| format!("opening {}", path.display()))?;
+        repo::from_tar_gz(std::io::BufReader::new(f))
+            .with_context(|| format!("reading {location}"))?
+    };
+    anyhow::ensure!(!files.files.is_empty(), "no feeds/*.json in {location}");
+    input.commit = files.commit.clone();
+    eprintln!(
+        "{name}: {} feed files{}",
+        files.files.len(),
+        files
+            .commit
+            .as_deref()
+            .map(|c| format!(" at commit {c}"))
+            .unwrap_or_default()
+    );
+    Ok((Data::Repo(files), input))
 }
 
 /// Fetches all feeds on `threads` threads; results are in feed order.

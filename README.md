@@ -214,10 +214,7 @@ reading v from this GeoTIFF.
 ## Public transport departures
 
 ```sh
-git clone --depth 1 https://github.com/public-transport/transitous
-git clone --depth 1 https://github.com/transitland/transitland-atlas
 cargo run --release -- transit-departures \
-  --feeds transitous/feeds --transitland-atlas transitland-atlas \
   --cache s3://my-bucket/osmsignals --output-dir transit
 ```
 
@@ -234,9 +231,16 @@ log2(departures per day per km²) = 0.01·v − 15.01   otherwise
 [Transitous](https://github.com/public-transport/transitous) (CC0),
 which curates static GTFS feeds worldwide in one JSON file per region.
 Sources that point into the [Transitland Atlas](https://github.com/transitland/transitland-atlas)
-or the [Mobility Database](https://mobilitydatabase.org/) are resolved
-with those catalogs; the Mobility Database export is fetched from its
-website unless `--mobility-database` names a local copy (or `none`).
+(CC-BY 4.0) or the [Mobility Database](https://mobilitydatabase.org/)
+are resolved with those catalogs. All three are downloaded over HTTPS
+on each run: the two repositories as the tarballs GitHub serves for
+their `main` branch, and the Mobility Database as its CSV export.
+They are cached like feeds, under `catalogs/<name>/`, so an outage at
+GitHub falls back to the last copy; the data BOM records the commit
+each repository was at. `--transitous` and `--transitland-atlas` also
+take a local tarball or checkout, and `--mobility-database` a local
+CSV file; `none` skips the sources that need the Atlas or the
+Mobility Database.
 Feeds that Transitous skips, that need credentials, or that are not
 GTFS are left out. By default (`--licenses open`) only feeds under a
 license we may republish with attribution are used: CC0, CC-BY,
@@ -279,10 +283,10 @@ hand; shifting one feed's times by seven minutes matches almost
 nothing (0.05% of trips).
 
 **Output.** Besides `transit-departures.2026-10-26.tiff` (named after
-`--date`, default today), its data BOM lists every feed used with its
-URL, SHA-256, license and attribution, and `datapackage.json` lists
-them as sources. `transit-departures.2026-10-26.report.json` gives each
-feed's status (changed, unchanged, stale with the error, expired or
+`--date`, default today), its data BOM lists the catalogs and every
+feed used with its URL, SHA-256, license and attribution, and
+`datapackage.json` lists them as sources. `transit-departures.2026-10-26.report.json` gives each
+catalog's and feed's status (changed, unchanged, stale with the error, expired or
 failed), its median week, its departures per week and duplicates, the
 skipped sources with reasons, and the duplicates by pair of feeds and
 agency.

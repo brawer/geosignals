@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
 // SPDX-License-Identifier: MIT
 
-//! End-to-end test of the transit-departures pipeline: two small feeds
-//! that share a bus, served over HTTP, through the cache, with the
-//! server first up, then unchanged, then down.
+//! End-to-end test of the transit-departures pipeline: a catalog and
+//! two small feeds that share a bus, served over HTTP, through the
+//! cache, with the server first up, then unchanged, then down.
 
 mod common;
 
@@ -92,6 +92,47 @@ fn regional() -> Vec<u8> {
     ])
 }
 
+const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// A gzipped tarball of a repository, like GitHub serves for a branch:
+/// a pax global header with the commit, then files in a top directory.
+fn repo_tarball(files: &[(&str, &str)]) -> Vec<u8> {
+    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    let mut b = tar::Builder::new(gz);
+    let pax = format!("comment={COMMIT}\n");
+    let record = format!("{} {pax}", pax.len() + 3);
+    let mut h = tar::Header::new_ustar();
+    h.set_path("pax_global_header").unwrap();
+    h.set_entry_type(tar::EntryType::XGlobalHeader);
+    h.set_size(record.len() as u64);
+    h.set_cksum();
+    b.append(&h, record.as_bytes()).unwrap();
+    for (path, content) in files {
+        let mut h = tar::Header::new_ustar();
+        h.set_path(format!("transitous-main/{path}")).unwrap();
+        h.set_size(content.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        b.append(&h, content.as_bytes()).unwrap();
+    }
+    b.into_inner().unwrap().finish().unwrap()
+}
+
+/// Transitous's catalog for Switzerland, pointing at `base`.
+fn catalog(base: &str) -> String {
+    format!(
+        r#"{{"sources": [
+            {{"name": "national", "type": "http", "url": "{base}/national.zip",
+              "license": {{"spdx-identifier": "CC-BY-4.0", "attribution-text": "National Rail"}}}},
+            {{"name": "regional", "type": "mobility-database", "mdb-id": "mdb-7",
+              "license": {{"spdx-identifier": "ODbL-1.0"}}}},
+            {{"name": "closed", "type": "http", "url": "{base}/closed.zip",
+              "license": {{"spdx-identifier": "CC-BY-NC-4.0"}}}},
+            {{"name": "realtime", "type": "url", "spec": "gtfs-rt", "url": "{base}/rt"}}
+        ]}}"#
+    )
+}
+
 struct Server {
     base: String,
     down: Arc<AtomicBool>,
@@ -100,9 +141,13 @@ struct Server {
 
 /// Serves `files` with ETags, answering `If-None-Match` with 304, and
 /// 503 for everything while `down` is set.
-fn serve(files: HashMap<String, Vec<u8>>) -> Server {
+fn serve(mut files: HashMap<String, Vec<u8>>) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
+    files.insert(
+        "/transitous.tar.gz".into(),
+        repo_tarball(&[("README.md", "hi"), ("feeds/ch.json", &catalog(&base))]),
+    );
     let down = Arc::new(AtomicBool::new(false));
     let not_modified = Arc::new(AtomicUsize::new(0));
     let files = Arc::new(Mutex::new(files));
@@ -159,24 +204,8 @@ fn serve(files: HashMap<String, Vec<u8>>) -> Server {
 }
 
 fn config(dir: &Path, base: &str) -> transit::Config {
-    let feeds = dir.join("feeds");
-    std::fs::create_dir_all(&feeds).unwrap();
-    std::fs::write(
-        feeds.join("ch.json"),
-        format!(
-            r#"{{"sources": [
-                {{"name": "national", "type": "http", "url": "{base}/national.zip",
-                  "license": {{"spdx-identifier": "CC-BY-4.0", "attribution-text": "National Rail"}}}},
-                {{"name": "regional", "type": "mobility-database", "mdb-id": "mdb-7",
-                  "license": {{"spdx-identifier": "ODbL-1.0"}}}},
-                {{"name": "closed", "type": "http", "url": "{base}/closed.zip",
-                  "license": {{"spdx-identifier": "CC-BY-NC-4.0"}}}},
-                {{"name": "realtime", "type": "url", "spec": "gtfs-rt", "url": "{base}/rt"}}
-            ]}}"#
-        ),
-    )
-    .unwrap();
     // The regional publisher's own server is gone; MobilityData's copy works.
+    std::fs::create_dir_all(dir).unwrap();
     let mdb = dir.join("mdb.csv");
     std::fs::write(
         &mdb,
@@ -187,7 +216,7 @@ fn config(dir: &Path, base: &str) -> transit::Config {
     )
     .unwrap();
     transit::Config {
-        feeds,
+        transitous: format!("{base}/transitous.tar.gz"),
         transitland_atlas: None,
         mobility_database: Some(mdb.to_str().unwrap().to_string()),
         cache: dir.join("cache").to_str().unwrap().to_string(),
@@ -286,12 +315,26 @@ fn counts_departures_through_cache() {
 
     let bom: Value = serde_json::from_slice(&std::fs::read(&s.bom).unwrap()).unwrap();
     let components = bom["components"].as_array().unwrap();
-    assert_eq!(components.len(), 2);
-    assert_eq!(components[0]["name"], "gtfs/ch/national");
-    assert_eq!(components[0]["licenses"][0]["license"]["id"], "CC-BY-4.0");
-    assert_eq!(components[0]["copyright"], "National Rail");
+    let names: Vec<&str> = components
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
     assert_eq!(
-        components[1]["licenses"][0]["license"]["url"],
+        names,
+        [
+            "catalogs/transitous",
+            "catalogs/mobility-database",
+            "gtfs/ch/national",
+            "gtfs/ch/regional"
+        ]
+    );
+    assert_eq!(components[0]["licenses"][0]["license"]["id"], "CC0-1.0");
+    assert!(components[0]["hashes"][0]["content"].is_string());
+    assert!(components[1].get("licenses").is_none(), "unknown license");
+    assert_eq!(components[2]["licenses"][0]["license"]["id"], "CC-BY-4.0");
+    assert_eq!(components[2]["copyright"], "National Rail");
+    assert_eq!(
+        components[3]["licenses"][0]["license"]["url"],
         "https://regional.example/terms"
     );
     assert_eq!(
@@ -299,15 +342,18 @@ fn counts_departures_through_cache() {
             .as_array()
             .unwrap()
             .len(),
-        2
+        4
     );
     let pkg: Value = serde_json::from_slice(&std::fs::read(&s.datapackage).unwrap()).unwrap();
-    assert_eq!(pkg["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(pkg["sources"].as_array().unwrap().len(), 4);
+    assert_eq!(report["catalogs"][0]["name"], "transitous");
+    assert_eq!(report["catalogs"][0]["commit"], COMMIT);
+    assert_eq!(report["catalogs"][0]["status"], "changed");
     assert_eq!(pkg["version"], "2026-06-15");
 
     // Second run: the server says nothing changed.
     let s2 = transit::run(&cfg).unwrap();
-    assert_eq!(server.not_modified.load(Ordering::SeqCst), 2);
+    assert_eq!(server.not_modified.load(Ordering::SeqCst), 3);
     let report: Value = serde_json::from_slice(&std::fs::read(&s2.report).unwrap()).unwrap();
     assert_eq!(
         statuses(&report),
@@ -324,6 +370,8 @@ fn counts_departures_through_cache() {
     assert_eq!((s3.feeds, s3.stale), (2, 2));
     assert_eq!(std::fs::read(&s3.output).unwrap(), tiff);
     let report: Value = serde_json::from_slice(&std::fs::read(&s3.report).unwrap()).unwrap();
+    assert_eq!(report["catalogs"][0]["status"], "stale");
+    assert_eq!(report["catalogs"][0]["commit"], COMMIT);
     assert!(
         report["feeds"][0]["error"]
             .as_str()
@@ -331,9 +379,17 @@ fn counts_departures_through_cache() {
             .contains("503")
     );
 
-    // Offline, with an empty cache, there is nothing to read.
+    // Offline, with an empty cache, there is no catalog to read.
     let mut empty = config(&dir.path().join("other"), &server.base);
     empty.offline = true;
+    let err = transit::run(&empty).unwrap_err();
+    assert!(err.to_string().contains("transitous catalog"), "{err}");
+
+    // A local checkout works offline, but no feed is cached.
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(checkout.join("feeds")).unwrap();
+    std::fs::write(checkout.join("feeds/ch.json"), catalog(&server.base)).unwrap();
+    empty.transitous = checkout.to_str().unwrap().to_string();
     let err = transit::run(&empty).unwrap_err();
     assert!(err.to_string().contains("no feed"), "{err}");
 }
