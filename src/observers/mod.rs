@@ -763,7 +763,7 @@ fn gdal_metadata(layer: &Layer, snapshot: &str, hist: &Histogram) -> String {
     format!(
         concat!(
             "<GDALMetadata>",
-            r#"<Item name="DATASET">{dataset}</Item>"#,
+            r#"<Item name="DATASET">https://doi.org/{doi}</Item>"#,
             r#"<Item name="SNAPSHOT">{snapshot}</Item>"#,
             r#"<Item name="LICENSE">{license}</Item>"#,
             r#"<Item name="ENCODING">v = 0: no observers; otherwise log2(distinct observers per km²) = {scale} * v - {neg_offset}</Item>"#,
@@ -773,7 +773,7 @@ fn gdal_metadata(layer: &Layer, snapshot: &str, hist: &Histogram) -> String {
             "{rat}",
             "</GDALMetadata>"
         ),
-        dataset = format!("https://doi.org/{}", layer.dataset.doi),
+        doi = layer.dataset.doi,
         snapshot = snapshot,
         license = layer.license.id,
         scale = scale,
