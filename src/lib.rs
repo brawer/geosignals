@@ -13,6 +13,7 @@ pub mod histogram;
 pub mod http;
 pub mod node_density;
 pub mod nominatim;
+pub mod observers;
 pub mod pbf;
 pub mod pyramid;
 pub mod raster;

@@ -320,6 +320,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
             description: "Public transport departures",
             run_id: &cfg.run_id,
             copyright: &copyright,
+            license: &crate::bom::ODBL,
         },
         &hashes,
     )?;

@@ -14,7 +14,7 @@
 //!
 //! [Frictionless Data Package v2]: https://datapackage.org/standard/data-package/
 
-use crate::bom::{self, Hashes};
+use crate::bom::{self, Hashes, License};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -23,7 +23,6 @@ pub const FILE_NAME: &str = "datapackage.json";
 
 const SCHEMA: &str = "https://datapackage.org/profiles/2.0/datapackage.json";
 const HOMEPAGE: &str = "https://github.com/brawer/osmsignals";
-const ODBL_URL: &str = "https://opendatacommons.org/licenses/odbl/1-0/";
 
 /// Media type of Cloud-Optimized GeoTIFF, as registered by the OGC.
 const COG_MEDIA_TYPE: &str = "image/tiff; application=geotiff; profile=cloud-optimized";
@@ -84,8 +83,82 @@ pub fn write_many(pkg: &Package, files: &ManyFiles) -> Result<PathBuf> {
         files.tiff_hashes,
         files.bom,
         &bom_hashes,
+        &bom::ODBL,
     );
     save(files.tiff, &doc)
+}
+
+/// One of several GeoTIFFs in a package, each under its own license.
+pub struct Layer<'a> {
+    /// Resource name, such as `inaturalist-observers-cc-by-4.0`; the
+    /// BOM resource gets `-bom` appended.
+    pub name: &'a str,
+    pub title: &'a str,
+    pub tiff: &'a Path,
+    pub tiff_hashes: &'a Hashes,
+    pub bom: &'a Path,
+    pub license: &'a License,
+}
+
+/// Writes `datapackage.json` for a run that made several GeoTIFFs,
+/// next to the first one. Each resource states its own license, since
+/// the files differ in what they may be used for.
+pub fn write_layers(
+    pkg: &Package,
+    sources: Vec<Value>,
+    timestamp: i64,
+    layers: &[Layer],
+) -> Result<PathBuf> {
+    anyhow::ensure!(!layers.is_empty(), "no layers to describe");
+    let created = crate::date::rfc3339(timestamp);
+    let mut resources = Vec::new();
+    for l in layers {
+        let bom_hashes = bom::hash_file(l.bom)?;
+        let licenses = json!([license_json(l.license)]);
+        let mut tiff = resource(
+            l.name,
+            l.tiff,
+            l.title,
+            "Cloud-Optimized GeoTIFF. This dated file never changes; \
+             the next release gets a new one.",
+            "tiff",
+            COG_MEDIA_TYPE,
+            l.tiff_hashes,
+        );
+        tiff["licenses"] = licenses.clone();
+        let mut bom = resource(
+            &format!("{}-bom", l.name),
+            l.bom,
+            "Data bill of materials (CycloneDX 1.7)",
+            &format!(
+                "Which osmsignals release made {}, from which sources.",
+                l.title
+            ),
+            "json",
+            CYCLONEDX_MEDIA_TYPE,
+            &bom_hashes,
+        );
+        bom["licenses"] = licenses;
+        resources.push(tiff);
+        resources.push(bom);
+    }
+    let doc = json!({
+        "$schema": SCHEMA,
+        "name": pkg.name,
+        "id": pkg.id,
+        "title": pkg.title,
+        "description": pkg.description,
+        "version": &created[..10],
+        "created": created,
+        "homepage": HOMEPAGE,
+        "sources": sources,
+        "resources": resources,
+    });
+    save(layers[0].tiff, &doc)
+}
+
+fn license_json(l: &License) -> Value {
+    json!({"name": l.id, "path": l.url, "title": l.title})
 }
 
 fn save(tiff: &Path, doc: &Value) -> Result<PathBuf> {
@@ -117,6 +190,7 @@ fn build(pkg: &Package, files: &Files, bom_hashes: &Hashes) -> Value {
         files.tiff_hashes,
         files.bom,
         bom_hashes,
+        &bom::ODBL,
     )
 }
 
@@ -130,6 +204,7 @@ fn document(
     tiff_hashes: &Hashes,
     bom: &Path,
     bom_hashes: &Hashes,
+    license: &License,
 ) -> Value {
     let created = crate::date::rfc3339(timestamp);
     let date = &created[..10];
@@ -142,11 +217,7 @@ fn document(
         "version": date,
         "created": created,
         "homepage": HOMEPAGE,
-        "licenses": [{
-            "name": "ODbL-1.0",
-            "path": ODBL_URL,
-            "title": "Open Data Commons Open Database License v1.0",
-        }],
+        "licenses": [license_json(license)],
         "sources": sources,
         "resources": [
             resource(
