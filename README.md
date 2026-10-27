@@ -382,7 +382,9 @@ a third; set `MALLOC_ARENA_MAX` to override.
 
 **Output.** The three files come to about 79 MB together. Their
 `Copyright` tag, data BOM and `datapackage.json` give the attribution
-that GBIF asks for: the dataset's contributors, its title and DOI.
+that GBIF asks for: the dataset's contributors, its title and DOI. For
+data analysts, [docs/naturalist-observers.md](docs/naturalist-observers.md)
+describes what the files mean, their biases and their licenses.
 
 ## Tests
 
