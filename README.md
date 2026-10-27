@@ -291,9 +291,19 @@ failed), its median week, its departures per week and duplicates, the
 skipped sources with reasons, and the duplicates by pair of feeds and
 agency.
 
-On the Swiss, German and bodo feeds, a run takes about a minute and
-1.2 GB of memory; with a warm cache, 20 seconds. Condensing a feed
-takes up to about 1 GB, so `--threads` also bounds memory.
+**Memory.** The condensed feeds live in memory-mapped scratch files
+in `--workdir`, so the kernel pages them in and out as needed; put
+`--workdir` on disk, not on a RAM disk such as a memory-backed
+Kubernetes `emptyDir`. The heap holds little more than the feeds being
+condensed: 200–250 MB for the Swiss or German national feed, among the
+largest anywhere, so `--threads` still bounds memory. On the Swiss,
+German and bodo feeds, a warm run takes 16 seconds and 100 MB of heap,
+and still finishes within a 300 MB memory limit; a cold run on 4
+threads, which condenses all three at once, takes a minute and 430 MB
+of heap, within a 1 GB limit. A planet-wide
+run should fit on a 2 GB machine with 2–4 threads. Scratch disk needs
+about 12 bytes per stop time of the median week, a few GB planet-wide,
+plus the downloads in progress.
 
 ## Tests
 

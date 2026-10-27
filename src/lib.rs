@@ -16,6 +16,7 @@ pub mod nominatim;
 pub mod pbf;
 pub mod pyramid;
 pub mod raster;
+pub mod slab;
 pub mod store;
 pub mod tile;
 pub mod transit;

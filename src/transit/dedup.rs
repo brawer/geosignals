@@ -45,19 +45,67 @@ fn cell(x: u32, y: u32) -> u64 {
     (u64::from(x >> CELL_SHIFT) << 32) | u64::from(y >> CELL_SHIFT)
 }
 
-fn key(x: u32, y: u32, day: u32, minute: u16) -> u64 {
-    (u64::from(x) << 34)
-        | (u64::from(y) << 16)
-        | (u64::from(day) << 13)
-        | u64::from(minute & 0x1fff)
+/// Departures of the larger feed, as `key(x, y, minute) << 7 | days`,
+/// sorted, one entry per key. Sorted keys take 8 bytes per departure
+/// (a hash set took about 40, with one entry per day), and all minutes
+/// at a pixel are next to each other.
+struct Departures(Vec<u64>);
+
+const MINUTES: u16 = 0x2000;
+
+fn key(x: u32, y: u32, minute: u16) -> u64 {
+    (u64::from(x) << 31) | (u64::from(y) << 13) | u64::from(minute % MINUTES)
+}
+
+impl Departures {
+    fn new(mut entries: Vec<u64>) -> Self {
+        entries.sort_unstable();
+        let mut out: Vec<u64> = Vec::with_capacity(entries.len());
+        for e in entries {
+            match out.last_mut() {
+                Some(last) if *last >> 7 == e >> 7 => *last |= e,
+                _ => out.push(e),
+            }
+        }
+        out.shrink_to_fit();
+        Departures(out)
+    }
+
+    /// Days on which there is a departure within one pixel and one
+    /// minute of `(x, y, minute)`.
+    fn days_near(&self, x: u32, y: u32, minute: u16) -> u8 {
+        let lo_m = minute.saturating_sub(1);
+        let hi_m = (minute + 1).min(MINUTES - 1);
+        if lo_m > hi_m {
+            return 0;
+        }
+        let mut days = 0u8;
+        for nx in x.saturating_sub(1)..=x + 1 {
+            for ny in y.saturating_sub(1)..=y + 1 {
+                let (lo, hi) = (key(nx, ny, lo_m) << 7, key(nx, ny, hi_m) << 7 | 0x7f);
+                let start = self.0.partition_point(|&e| e < lo);
+                for &e in self.0[start..].iter().take_while(|&&e| e <= hi) {
+                    days |= e as u8 & 0x7f;
+                }
+            }
+        }
+        days
+    }
 }
 
 /// Returns, for each feed and trip, the days on which the trip is a
 /// duplicate of a larger feed's, and the overlaps found.
 pub fn find(feeds: &[&Condensed], threads: usize) -> (Vec<Vec<u8>>, Vec<Overlap>) {
+    // Not `collect()`, which would reserve room for every stop.
     let cells: Vec<HashSet<u64>> = feeds
         .iter()
-        .map(|f| f.stops.iter().map(|s| cell(s.x, s.y)).collect())
+        .map(|f| {
+            let mut set = HashSet::new();
+            for s in f.stops.iter() {
+                set.insert(cell(s.x, s.y));
+            }
+            set
+        })
         .collect();
     let mut by_cell: HashMap<u64, Vec<usize>> = HashMap::new();
     for (i, cs) in cells.iter().enumerate() {
@@ -154,38 +202,18 @@ fn compare(
         .filter(|&(x, y)| x >= 0 && y >= 0)
         .map(|(x, y)| ((x as u64) << 32) | y as u64)
         .collect();
-    let mut keys: HashSet<u64> = HashSet::new();
+    let mut entries = Vec::new();
     for t in &large.trips {
         for s in large.trip_stops(t) {
-            if s.minute == NO_TIME || !near_small.contains(&cell(s.x, s.y)) {
-                continue;
-            }
-            for d in 0..7 {
-                if t.days & (1 << d) != 0 {
-                    keys.insert(key(s.x, s.y, d, s.minute));
-                }
+            if s.minute != NO_TIME && near_small.contains(&cell(s.x, s.y)) {
+                entries.push(key(s.x, s.y, s.minute) << 7 | u64::from(t.days & 0x7f));
             }
         }
     }
-    if keys.is_empty() {
+    if entries.is_empty() {
         return (Vec::new(), (0, Vec::new()));
     }
-    let hit = |x: u32, y: u32, d: u32, m: u16| -> bool {
-        for dx in [-1i64, 0, 1] {
-            for dy in [-1i64, 0, 1] {
-                for dm in [-1i64, 0, 1] {
-                    let (nx, ny, nm) = (x as i64 + dx, y as i64 + dy, m as i64 + dm);
-                    if nx < 0 || ny < 0 || !(0..0x2000).contains(&nm) {
-                        continue;
-                    }
-                    if keys.contains(&key(nx as u32, ny as u32, d, nm as u16)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    };
+    let departures = Departures::new(entries);
     let mut dropped = Vec::new();
     let mut total = 0u64;
     let mut by_agency: HashMap<u32, u64> = HashMap::new();
@@ -198,16 +226,16 @@ fn compare(
         if timed < 2 {
             continue;
         }
-        let mut days = 0u8;
-        for d in 0..7 {
-            if t.days & (1 << d) == 0 {
-                continue;
+        let mut hits = [0usize; 7];
+        for s in stops.iter().filter(|s| s.minute != NO_TIME) {
+            let near = departures.days_near(s.x, s.y, s.minute) & t.days;
+            for (d, h) in hits.iter_mut().enumerate() {
+                *h += usize::from(near >> d & 1);
             }
-            let hits = stops
-                .iter()
-                .filter(|s| s.minute != NO_TIME && hit(s.x, s.y, d, s.minute))
-                .count();
-            if hits * 100 >= timed * MATCH_PERCENT {
+        }
+        let mut days = 0u8;
+        for (d, &h) in hits.iter().enumerate() {
+            if t.days & (1 << d) != 0 && h * 100 >= timed * MATCH_PERCENT {
                 days |= 1 << d;
             }
         }
@@ -240,15 +268,11 @@ mod tests {
     type TestTrip<'a> = (u32, u8, &'a [(u32, u32, u16)]);
 
     fn feed(agencies: &[&str], trips: &[TestTrip]) -> Condensed {
-        let mut c = Condensed {
-            agencies: agencies.iter().map(|a| a.to_string()).collect(),
-            ..Condensed::default()
-        };
+        let (mut all_trips, mut all_stops) = (Vec::new(), Vec::new());
         for &(agency, days, stops) in trips {
-            let start = c.stops.len() as u32;
-            c.stops
-                .extend(stops.iter().map(|&(x, y, minute)| Stop { x, y, minute }));
-            c.trips.push(Trip {
+            let start = all_stops.len() as u32;
+            all_stops.extend(stops.iter().map(|&(x, y, minute)| Stop { x, y, minute }));
+            all_trips.push(Trip {
                 agency,
                 route_type: 3,
                 days,
@@ -256,7 +280,12 @@ mod tests {
                 len: stops.len() as u32,
             });
         }
-        c
+        Condensed {
+            agencies: agencies.iter().map(|a| a.to_string()).collect(),
+            trips: all_trips.into(),
+            stops: all_stops.into(),
+            ..Condensed::default()
+        }
     }
 
     const A: &[(u32, u32, u16)] = &[(1000, 1000, 480), (1010, 1000, 485), (1020, 1000, 490)];

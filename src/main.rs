@@ -104,12 +104,13 @@ enum Command {
         /// such as transit-departures.2026-10-26.tiff.
         #[arg(long)]
         output_dir: PathBuf,
-        /// Working directory for downloads in progress. Each signal uses
-        /// its own subdirectory.
+        /// Working directory for downloads in progress and for the
+        /// condensed feeds, which are memory-mapped from here; it must be
+        /// on disk, not in RAM. Each signal uses its own subdirectory.
         #[arg(long, alias = "tmpdir", default_value_os_t = std::env::temp_dir())]
         workdir: PathBuf,
         /// Worker threads; defaults to the number of CPUs. Each condenses
-        /// one feed at a time, which takes up to about 1 GB of memory.
+        /// one feed at a time, which takes up to about 250 MB of memory.
         #[arg(long)]
         threads: Option<usize>,
         /// The day of the output, as YYYY-MM-DD; defaults to today (UTC).

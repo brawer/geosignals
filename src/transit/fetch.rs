@@ -178,7 +178,7 @@ impl Fetcher<'_> {
             &meta.sha256[..16]
         );
         if let Some(data) = self.store.get(&condensed_key)?
-            && let Ok(c) = Condensed::decode(&data)
+            && let Ok(c) = Condensed::decode_in(&data, Some(self.tmp))
         {
             return Ok(Fetched {
                 meta,
@@ -189,8 +189,8 @@ impl Fetcher<'_> {
         if !have_zip {
             self.restore_cached(&src, &meta, &zip_path)?;
         }
-        let condensed =
-            gtfs::condense(&zip_path).with_context(|| format!("condensing {}", feed.id))?;
+        let condensed = gtfs::condense_in(&zip_path, Some(self.tmp))
+            .with_context(|| format!("condensing {}", feed.id))?;
         self.store.put(&condensed_key, &condensed.encode()?)?;
         Ok(Fetched {
             meta,
