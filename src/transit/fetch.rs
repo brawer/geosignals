@@ -18,6 +18,9 @@
 //! the publisher cannot be reached, it tries the feed's mirrors, and
 //! then falls back to the cached copy, however old. Only a feed that was
 //! never fetched successfully is missing from the output.
+//!
+//! The catalogs that list the feeds are cached the same way, under
+//! `catalogs/<name>/`, so a run works even when GitHub is down.
 
 use super::catalog::Feed;
 use super::gtfs::{self, Condensed};
@@ -140,23 +143,85 @@ pub fn key_prefix(feed_id: &str) -> String {
     s
 }
 
+/// A file kept fresh through the cache: `<prefix>/<file>` and its
+/// `<prefix>/meta.json`.
+pub struct Source<'a> {
+    pub prefix: &'a str,
+    pub file: &'a str,
+    /// Where to download it, best first.
+    pub urls: &'a [String],
+    /// What the file starts with, such as `PK` for a zip.
+    pub magic: &'a [u8],
+    /// What to call it in errors, such as "zip file".
+    pub kind: &'a str,
+}
+
 impl Fetcher<'_> {
     /// Fetches and condenses `feed`; fails only if there is neither a
     /// download nor a cached copy.
     pub fn fetch(&self, feed: &Feed) -> Result<Fetched> {
         let prefix = key_prefix(&feed.id);
-        let meta_key = format!("{prefix}/meta.json");
-        let zip_key = format!("{prefix}/feed.zip");
+        let src = Source {
+            prefix: &prefix,
+            file: "feed.zip",
+            urls: &feed.urls,
+            magic: b"PK",
+            kind: "zip file",
+        };
+        let zip_path = self.tmp.join(format!("{}.zip", prefix.replace('/', "~")));
+        let _cleanup = Cleanup(&zip_path);
+        let (meta, status, have_zip) = self.refresh(&src, &zip_path)?;
+
+        let condensed_key = format!(
+            "{prefix}/condensed-v{}-{}.bin",
+            gtfs::VERSION,
+            &meta.sha256[..16]
+        );
+        if let Some(data) = self.store.get(&condensed_key)?
+            && let Ok(c) = Condensed::decode(&data)
+        {
+            return Ok(Fetched {
+                meta,
+                status,
+                condensed: c,
+            });
+        }
+        if !have_zip {
+            self.restore_cached(&src, &meta, &zip_path)?;
+        }
+        let condensed =
+            gtfs::condense(&zip_path).with_context(|| format!("condensing {}", feed.id))?;
+        self.store.put(&condensed_key, &condensed.encode()?)?;
+        Ok(Fetched {
+            meta,
+            status,
+            condensed,
+        })
+    }
+
+    /// Fetches `src` into the file `dest`, from its publisher if it
+    /// changed or else from the cache; fails only if there is neither.
+    pub fn fetch_file(&self, src: &Source, dest: &Path) -> Result<(Meta, Status)> {
+        let (meta, status, have_file) = self.refresh(src, dest)?;
+        if !have_file {
+            self.restore_cached(src, &meta, dest)?;
+        }
+        Ok((meta, status))
+    }
+
+    /// Asks the publisher for a newer version of `src`, and stores it in
+    /// the cache if there is one. Returns what the cache now knows, how
+    /// we got it, and whether the file was downloaded to `dest`.
+    fn refresh(&self, src: &Source, dest: &Path) -> Result<(Meta, Status, bool)> {
+        let meta_key = format!("{}/meta.json", src.prefix);
+        let file_key = format!("{}/{}", src.prefix, src.file);
         let cached: Option<Meta> = self
             .store
             .get(&meta_key)?
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
             .and_then(|v| Meta::from_json(&v));
-
-        let zip_path = self.tmp.join(format!("{}.zip", prefix.replace('/', "~")));
-        let _cleanup = Cleanup(&zip_path);
-        let mut have_zip = false;
-        let (meta, status) = match self.download(feed, cached.as_ref(), &zip_path) {
+        let mut downloaded = false;
+        let (meta, status) = match self.download(src, cached.as_ref(), dest) {
             Ok(Download::NotModified) => {
                 let mut m = cached
                     .clone()
@@ -165,14 +230,14 @@ impl Fetcher<'_> {
                 (m, Status::Unchanged)
             }
             Ok(Download::Fetched(mut m)) => {
-                have_zip = true;
+                downloaded = true;
                 match &cached {
                     Some(old) if old.sha256 == m.sha256 => {
                         m.fetched = old.fetched;
                         (m, Status::Unchanged)
                     }
                     _ => {
-                        self.store.upload(&zip_key, &zip_path)?;
+                        self.store.upload(&file_key, dest)?;
                         (m, Status::Changed)
                     }
                 }
@@ -192,54 +257,35 @@ impl Fetcher<'_> {
             text.push(b'\n');
             self.store.put(&meta_key, &text)?;
         }
-
-        let condensed_key = format!(
-            "{prefix}/condensed-v{}-{}.bin",
-            gtfs::VERSION,
-            &meta.sha256[..16]
-        );
-        if let Some(data) = self.store.get(&condensed_key)?
-            && let Ok(c) = Condensed::decode(&data)
-        {
-            return Ok(Fetched {
-                meta,
-                status,
-                condensed: c,
-            });
-        }
-        if !have_zip {
-            ensure!(
-                self.store.download(&zip_key, &zip_path)?,
-                "{zip_key} is missing from {}",
-                self.store.describe()
-            );
-            let sha = sha256_file(&zip_path)?;
-            ensure!(
-                sha == meta.sha256,
-                "{zip_key} in the cache does not match its meta.json"
-            );
-        }
-        let condensed =
-            gtfs::condense(&zip_path).with_context(|| format!("condensing {}", feed.id))?;
-        self.store.put(&condensed_key, &condensed.encode()?)?;
-        Ok(Fetched {
-            meta,
-            status,
-            condensed,
-        })
+        Ok((meta, status, downloaded))
     }
 
-    /// Tries the feed's URLs in turn.
-    fn download(&self, feed: &Feed, cached: Option<&Meta>, dest: &Path) -> Result<Download> {
+    /// Copies the cached file of `src` to `dest`, checking its hash.
+    fn restore_cached(&self, src: &Source, meta: &Meta, dest: &Path) -> Result<()> {
+        let key = format!("{}/{}", src.prefix, src.file);
+        ensure!(
+            self.store.download(&key, dest)?,
+            "{key} is missing from {}",
+            self.store.describe()
+        );
+        ensure!(
+            sha256_file(dest)? == meta.sha256,
+            "{key} in the cache does not match its meta.json"
+        );
+        Ok(())
+    }
+
+    /// Tries the URLs of `src` in turn.
+    fn download(&self, src: &Source, cached: Option<&Meta>, dest: &Path) -> Result<Download> {
         if self.offline {
             bail!("offline");
         }
         let mut errors = Vec::new();
-        for url in &feed.urls {
+        for url in src.urls {
             let previous = cached.filter(|m| &m.url == url);
             let mut backoff = self.retry_delay;
             for attempt in 1..=DOWNLOAD_ATTEMPTS {
-                match self.download_one(url, previous, dest) {
+                match self.download_one(src, url, previous, dest) {
                     Ok(d) => return Ok(d),
                     Err(e) if attempt < DOWNLOAD_ATTEMPTS && is_transient(&e) => {
                         std::thread::sleep(backoff);
@@ -255,7 +301,13 @@ impl Fetcher<'_> {
         bail!("{}", errors.join("; "))
     }
 
-    fn download_one(&self, url: &str, previous: Option<&Meta>, dest: &Path) -> Result<Download> {
+    fn download_one(
+        &self,
+        src: &Source,
+        url: &str,
+        previous: Option<&Meta>,
+        dest: &Path,
+    ) -> Result<Download> {
         let Some(mut reader) = HttpReader::open_if_changed(
             self.agent.clone(),
             url,
@@ -282,8 +334,8 @@ impl Fetcher<'_> {
             if n == 0 {
                 break;
             }
-            if bytes == 0 && !buf[..n].starts_with(b"PK") {
-                bail!("{url} is not a zip file");
+            if bytes == 0 && !buf[..n].starts_with(src.magic) {
+                bail!("{url} is not a {}", src.kind);
             }
             sha.update(&buf[..n]);
             out.write_all(&buf[..n])?;

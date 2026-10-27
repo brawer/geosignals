@@ -188,9 +188,10 @@ pub fn write_sources(run: &SourcesRun, output: &Hashes) -> Result<PathBuf> {
 
 fn source_component(s: &Source) -> Value {
     let mut license = json!({});
-    match (&s.license_id, &s.license_url) {
-        (Some(id), _) => license["id"] = json!(id),
-        (None, _) => license["name"] = json!("see license URL"),
+    if let Some(id) = &s.license_id {
+        license["id"] = json!(id);
+    } else {
+        license["name"] = json!("see license URL");
     }
     if let Some(url) = &s.license_url {
         license["url"] = json!(url);
@@ -209,10 +210,12 @@ fn source_component(s: &Source) -> Value {
         "type": "data",
         "name": s.name,
         "version": crate::date::rfc3339(s.version),
-        "licenses": [{"license": license}],
         "data": [data],
         "externalReferences": refs,
     });
+    if s.license_id.is_some() || s.license_url.is_some() {
+        c["licenses"] = json!([{"license": license}]);
+    }
     if let Some(copyright) = &s.copyright {
         c["copyright"] = json!(copyright);
     }

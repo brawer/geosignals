@@ -16,10 +16,10 @@
 //! [Transitland Atlas]: https://github.com/transitland/transitland-atlas
 //! [Mobility Database]: https://mobilitydatabase.org/
 
+use super::repo::FeedFiles;
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::Path;
 
 /// One GTFS feed to fetch.
 #[derive(Clone, Debug, PartialEq)]
@@ -93,10 +93,11 @@ pub struct Catalogs {
 }
 
 impl Catalogs {
-    /// Reads every `feeds/*.json` of a Transitland Atlas checkout.
-    pub fn load_atlas(&mut self, dir: &Path) -> Result<()> {
-        for path in json_files(&dir.join("feeds"))? {
-            let doc = read_json(&path)?;
+    /// Reads the feed files of the Transitland Atlas.
+    pub fn load_atlas(&mut self, files: &FeedFiles) -> Result<()> {
+        for (name, data) in &files.files {
+            let doc: Value = serde_json::from_slice(data)
+                .with_context(|| format!("parsing Transitland Atlas feeds/{name}.json"))?;
             for feed in doc["feeds"].as_array().into_iter().flatten() {
                 if let Some(id) = feed["id"].as_str() {
                     self.atlas.insert(id.to_string(), feed.clone());
@@ -125,16 +126,13 @@ impl Catalogs {
     }
 }
 
-/// Reads the feeds of a Transitous checkout's `feeds/` directory.
-pub fn load(transitous_feeds: &Path, catalogs: &Catalogs) -> Result<(Vec<Feed>, Vec<Skipped>)> {
+/// Reads the feeds of Transitous's region files.
+pub fn load(transitous: &FeedFiles, catalogs: &Catalogs) -> Result<(Vec<Feed>, Vec<Skipped>)> {
     let mut feeds = Vec::new();
     let mut skipped = Vec::new();
-    for path in json_files(transitous_feeds)? {
-        let region = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let doc = read_json(&path)?;
+    for (region, data) in &transitous.files {
+        let doc: Value = serde_json::from_slice(data)
+            .with_context(|| format!("parsing Transitous feeds/{region}.json"))?;
         for source in doc["sources"].as_array().into_iter().flatten() {
             let name = source["name"].as_str().unwrap_or("");
             let id = format!("{region}/{name}");
@@ -287,22 +285,6 @@ fn merge(a: License, b: License) -> License {
     }
 }
 
-fn json_files(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
-    let mut files: Vec<_> = std::fs::read_dir(dir)
-        .with_context(|| format!("reading {}", dir.display()))?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "json"))
-        .collect();
-    files.sort();
-    Ok(files)
-}
-
-fn read_json(path: &Path) -> Result<Value> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,20 +391,17 @@ mod tests {
 
     #[test]
     fn loads_region_files() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("ch.json"),
-            json!({"sources": [
-                {"name": "sbb", "type": "http", "url": "https://sbb/"},
-                {"name": "sbb", "type": "http", "url": "https://sbb2/"},
-                {"name": "rt", "type": "url", "spec": "gtfs-rt", "url": "https://rt/"},
-                {"name": "old", "type": "http", "url": "https://old/", "skip": true},
-            ]})
-            .to_string(),
-        )
-        .unwrap();
-        std::fs::write(dir.path().join("README.md"), "not a feed").unwrap();
-        let (feeds, skipped) = load(dir.path(), &Catalogs::default()).unwrap();
+        let ch = json!({"sources": [
+            {"name": "sbb", "type": "http", "url": "https://sbb/"},
+            {"name": "sbb", "type": "http", "url": "https://sbb2/"},
+            {"name": "rt", "type": "url", "spec": "gtfs-rt", "url": "https://rt/"},
+            {"name": "old", "type": "http", "url": "https://old/", "skip": true},
+        ]});
+        let files = FeedFiles {
+            files: vec![("ch".into(), ch.to_string().into_bytes())],
+            commit: None,
+        };
+        let (feeds, skipped) = load(&files, &Catalogs::default()).unwrap();
         assert_eq!(feeds.len(), 1);
         assert_eq!(feeds[0].id, "ch/sbb");
         let reasons: Vec<_> = skipped
