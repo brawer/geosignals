@@ -40,10 +40,10 @@ jobs:
     - name: Run smoke test
       env:
         OSMSIGNALS_SMOKE_PBF: liechtenstein.osm.pbf
-      run: cargo test --locked --release --test node_density smoke_test -- --nocapture
+      run: cargo test --locked --release --test osm_node_density smoke_test -- --nocapture
     - name: Read the latest planet over HTTPS
       run: |
-        cargo run --locked --release -- node-density --smoke-test --output-dir out
+        cargo run --locked --release -- osm-node-density --smoke-test --output-dir out
         ls -l out/osm-node-density.*.tiff
         cat out/osm-node-density.*.cdx.json
     - name: Check output with GDAL

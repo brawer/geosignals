@@ -3,9 +3,9 @@
 # SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
 # SPDX-License-Identifier: MIT
 
-"""Compares image formats for node-density tiles.
+"""Compares image formats for osm-node-density tiles.
 
-Reads the raw tile samples written by `osmsignals node-density --sample-dir`
+Reads the raw tile samples written by `osmsignals osm-node-density --sample-dir`
 (zstd-compressed little-endian u32 counts, 256×256, one file per tile named
 z-x-y.u32.zst), encodes each tile in several ways, and extrapolates the
 total archive size. Tiles at zoom <= 5 are all sampled; deeper tiles are

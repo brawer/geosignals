@@ -7,7 +7,7 @@
 #   podman build -t osmsignals .
 #   podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" \
 #       -v "$PWD:/data" osmsignals \
-#       node-density --output-dir .
+#       osm-node-density --output-dir .
 #
 # Releases are built and attested by .github/workflows/release-build.yml.
 # The build is meant to be reproducible, so that anyone can rebuild a
