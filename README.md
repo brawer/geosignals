@@ -378,7 +378,11 @@ copying them together. A full run of the October 2026 snapshot with 32
 threads took 18 minutes on four CPUs and peaked at 1.2 GB of
 memory, against 2.4 GB for a first version that read whole column
 chunks. On Linux we cap glibc at two malloc arenas, which saved about
-a third; set `MALLOC_ARENA_MAX` to override.
+a third; set `MALLOC_ARENA_MAX` to override. The static musl build in
+our container image needs no such setting. On 500 eBird files with 32
+threads, it peaked at 780 MB against 970 MB for glibc, and took 175
+against 147 seconds; mimalloc instead of musl's allocator took 1.7 GB
+and was no faster.
 
 **Output.** The three files come to about 79 MB together. Their
 `Copyright` tag, data BOM and `datapackage.json` give the attribution
