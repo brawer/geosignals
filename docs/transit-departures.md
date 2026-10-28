@@ -173,7 +173,7 @@ up to about ±85° latitude.
 - **Values.** A pixel stores departures per day per km² of real Earth
   surface, so pixels can be compared across latitudes. The values are
   unsigned 16-bit integers on a log scale, with the same encoding as
-  the other osmsignals rasters:
+  the other geosignals rasters:
 
 ```
 v = 0                                          no departures
@@ -318,7 +318,7 @@ page is not legal advice.
 
 ```sh
 cargo run --release -- transit-departures \
-  --cache s3://my-bucket/osmsignals --output-dir transit
+  --cache s3://my-bucket/geosignals --output-dir transit
 ```
 
 `--date 2026-10-26` names the run's day. `--only ch/` restricts a run

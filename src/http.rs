@@ -29,9 +29,9 @@ const REQUEST_DURATION: Duration = Duration::from_secs(10 * 60);
 pub fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .user_agent(concat!(
-            "osmsignals/",
+            "geosignals/",
             env!("CARGO_PKG_VERSION"),
-            " (+https://github.com/brawer/osmsignals)"
+            " (+https://github.com/brawer/geosignals)"
         ))
         .timeout_connect(Some(Duration::from_secs(30)))
         .timeout_recv_response(Some(Duration::from_secs(60)))

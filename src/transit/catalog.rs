@@ -336,7 +336,7 @@ fn apply_checked(feeds: &mut Vec<Feed>, regions: &[&str], checked: &str) -> Resu
             .context("checked.json: entry without id")?;
         let checked = entry["checked"].as_str().unwrap_or("unknown date");
         let mut license = license_of(&entry["license"], "spdx", "attribution");
-        license.permission = Some(format!("checked by osmsignals on {checked}"));
+        license.permission = Some(format!("checked by geosignals on {checked}"));
         match feeds.iter_mut().find(|f| f.id == id) {
             Some(feed) => feed.license = license,
             None => {
@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(feeds[0].license.attribution.as_deref(), Some("SBB"));
         assert_eq!(
             feeds[0].license.permission.as_deref(),
-            Some("checked by osmsignals on 2026-10-28")
+            Some("checked by geosignals on 2026-10-28")
         );
         // The file that ships parses.
         apply_checked(&mut Vec::new(), &[], CHECKED).unwrap();

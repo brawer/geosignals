@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! Data bill of materials: a CycloneDX 1.7 document saying which version
-//! of osmsignals made an output file from which input. It is written
+//! of geosignals made an output file from which input. It is written
 //! next to the output, with the same name and `.cdx.json` instead of
 //! `.tiff`.
 //!
@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-const REPO_URL: &str = "https://github.com/brawer/osmsignals";
+const REPO_URL: &str = "https://github.com/brawer/geosignals";
 const ODBL_URL: &str = "https://opendatacommons.org/licenses/odbl/1-0/";
 const OSM_COPYRIGHT: &str = "© OpenStreetMap contributors";
 
@@ -29,7 +29,8 @@ const COG_MIME_TYPE: &str = "image/tiff";
 
 /// Namespace for the version-5 UUID in `serialNumber`, which is
 /// UUIDv5(URL, "https://github.com/brawer/osmsignals#data-bom-serial").
-/// Frozen: changing it would change every serial number.
+/// Frozen: changing it would change every serial number, so it keeps
+/// the repo's old name.
 const SERIAL_NAMESPACE: [u8; 16] = [
     0x3b, 0xfe, 0xa3, 0xc0, 0xa1, 0x58, 0x5d, 0xcd, 0x82, 0x43, 0xee, 0xbe, 0x86, 0xde, 0xdc, 0x1a,
 ];
@@ -355,11 +356,11 @@ fn document(doc: &Doc, sha256: &str, sha512: &str, components: Vec<Value>) -> Va
             "supplier": supplier(),
             "tools": {
                 "components": [{
-                    "bom-ref": "tool-osmsignals",
+                    "bom-ref": "tool-geosignals",
                     "type": "application",
-                    "name": "osmsignals",
+                    "name": "geosignals",
                     "version": version,
-                    "purl": format!("pkg:github/brawer/osmsignals@v{version}"),
+                    "purl": format!("pkg:github/brawer/geosignals@v{version}"),
                     "externalReferences": [
                         {"type": "vcs", "url": REPO_URL},
                         {"type": "release-notes", "url": format!("{REPO_URL}/releases/tag/v{version}")},
@@ -390,15 +391,15 @@ fn document(doc: &Doc, sha256: &str, sha512: &str, components: Vec<Value>) -> Va
         "components": components,
         "dependencies": [{"ref": output_name, "dependsOn": refs}],
         "formulation": [{
-            "bom-ref": "formula-osmsignals",
+            "bom-ref": "formula-geosignals",
             "workflows": [{
-                "bom-ref": "workflow-osmsignals",
+                "bom-ref": "workflow-geosignals",
                 "uid": doc.run_id,
-                "name": format!("osmsignals {}", doc.description),
+                "name": format!("geosignals {}", doc.description),
                 "taskTypes": ["build"],
                 "timeStart": anchor,
                 "timeEnd": anchor,
-                "resourceReferences": [{"ref": "tool-osmsignals"}],
+                "resourceReferences": [{"ref": "tool-geosignals"}],
                 "inputs": inputs,
                 "outputs": [{"resource": {"ref": output_name}}],
             }],
