@@ -41,7 +41,11 @@ fn run(pbf: &Path, run_size: usize) -> Output {
         sample_rate: 64,
     };
     let input = std::fs::File::open(pbf).unwrap();
-    let summary = osm_node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
+    let reopen = || -> anyhow::Result<Box<dyn std::io::Read + Send>> {
+        Ok(Box::new(std::fs::File::open(pbf)?))
+    };
+    let summary =
+        osm_node_density::run(std::io::BufReader::new(input), Some(&reopen), &cfg).unwrap();
     let tiff = std::fs::read(&summary.output).unwrap();
     let image = common::read(&tiff);
     let tagged_tiff = std::fs::read(&summary.tagged.tiff).unwrap();
@@ -75,8 +79,10 @@ fn approx_nodes(z: u8, y: u32, pixels: &[u16]) -> f64 {
 
 const ZUGERLAND: &str = "tests/data/zugerland.osm.pbf";
 
-/// Nodes in the test extract with a tag other than `source` and such.
-const TAGGED_NODES: u64 = 221;
+/// Nodes in the test extract with a tag other than `source` and such,
+/// plus ways with a point-of-interest tag (61 of them); checked with
+/// pyosmium.
+const TAGGED_NODES: u64 = 221 + 61;
 
 #[test]
 fn zugerland() {
@@ -205,6 +211,7 @@ fn tagged_layer() {
     let out = run(Path::new(ZUGERLAND), 1000);
     let tagged = &out.summary.tagged;
     assert_eq!(tagged.nodes, TAGGED_NODES);
+    assert_eq!(out.summary.poi_ways, 61);
     assert_eq!(
         tagged.tiff.file_name().unwrap(),
         "osm-tagged-node-density.2026-01-27.tiff"
@@ -298,7 +305,11 @@ fn restart_after_crash() {
         sample_rate: 64,
     };
     let input = std::fs::File::open(ZUGERLAND).unwrap();
-    let summary = osm_node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
+    let reopen = || -> anyhow::Result<Box<dyn std::io::Read + Send>> {
+        Ok(Box::new(std::fs::File::open(ZUGERLAND)?))
+    };
+    let summary =
+        osm_node_density::run(std::io::BufReader::new(input), Some(&reopen), &cfg).unwrap();
     assert_eq!(summary.nodes, 1790);
     assert_eq!(summary.output, output);
     common::read(&std::fs::read(&output).unwrap());
@@ -340,4 +351,24 @@ fn smoke_test() {
         "{n} vs {}",
         summary.nodes
     );
+}
+
+#[test]
+fn ways_need_a_second_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = osm_node_density::Config {
+        input: osmsignals::bom::Input::new("-"),
+        run_id: String::new(),
+        output_dir: dir.path().to_path_buf(),
+        workdir: dir.path().to_path_buf(),
+        threads: 2,
+        run_size: 1000,
+        max_blocks: None,
+        sample_dir: None,
+        sample_rate: 64,
+    };
+    let input = std::fs::File::open(ZUGERLAND).unwrap();
+    let summary = osm_node_density::run(std::io::BufReader::new(input), None, &cfg).unwrap();
+    assert_eq!(summary.poi_ways, 0, "ways are not read");
+    assert_eq!(summary.tagged.nodes, 221, "only tagged nodes count");
 }
