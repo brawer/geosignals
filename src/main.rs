@@ -184,6 +184,8 @@ fn default_threads(threads: Option<usize>) -> usize {
 /// otherwise. By default glibc gives threads up to eight arenas per
 /// CPU, and with dozens of reader threads freeing what others
 /// allocated, about a third of our memory went to arena slack.
+/// Static musl builds need nothing: musl's allocator used even less
+/// memory, and swapping in mimalloc doubled it without being faster.
 fn limit_malloc_arenas() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     if std::env::var_os("MALLOC_ARENA_MAX").is_none() {
