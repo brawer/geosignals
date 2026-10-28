@@ -63,8 +63,8 @@ Most of the data is recent: both projects have grown steeply, so the
 last few years dominate.
 
 The two datasets are not equally fresh. iNaturalist sends its data to
-GBIF continuously; the October 2026 snapshot has observations up to
-the last weeks before it. The eBird dataset is
+GBIF continuously; the October 2026 snapshot has 26 million of its
+observations from 2026. The eBird dataset is
 [released to GBIF once a year](https://www.gbif.org/dataset/4fa7b334-ce0d-4e88-aaae-2e0c138d049e),
 and in the October 2026 snapshot it ends in December 2024. Its newest
 observations are therefore 10 to 22 months old.
