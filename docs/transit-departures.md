@@ -321,7 +321,47 @@ cargo run --release -- transit-departures \
   --cache s3://my-bucket/geosignals --output-dir transit
 ```
 
-`--date 2026-10-26` names the run's day. `--only ch/` restricts a run
-to some regions. `--offline` uses only the cache. See the
-[README](../README.md#public-transport-departures) for the cache,
-memory needs and other options.
+`--date 2026-10-26` names the run's day; it defaults to today (UTC).
+`--only ch/` restricts a run to some regions, and may be given several
+times. See [Running geosignals](running.md) for the container, the data
+BOM, `datapackage.json` and scratch space.
+
+**Catalogs.** Transitous and the Transitland Atlas are downloaded as
+the tarballs GitHub serves for their `main` branch, and the Mobility
+Database as its CSV export. They are cached like feeds, under
+`catalogs/<name>/`, so an outage at GitHub falls back to the last copy.
+`--transitous` and `--transitland-atlas` also take a local tarball or
+checkout, and `--mobility-database` a local CSV file; `none` skips the
+sources that need the Atlas or the Mobility Database.
+
+**Licenses.** `--licenses open` (the default) uses only feeds under a
+license we may republish, as described in [Licenses and
+attribution](#licenses-and-attribution). `--licenses any` uses all
+feeds, for internal use only.
+
+**Cache.** `--cache` is a directory or an S3-compatible bucket
+(`s3://bucket/prefix`, configured with `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and `AWS_ENDPOINT_URL`). For each
+feed it keeps the last download, its `ETag`, `Last-Modified` and
+SHA-256, and a condensed copy of its median week. A run asks each
+publisher whether the feed changed (`If-None-Match`,
+`If-Modified-Since`), retries network errors, tries mirrors such as
+MobilityData's daily copy, and if all fail uses the cached copy,
+however old, as long as its timetable ended at most
+`--max-expired-days` (90) before `--date`. `--offline` uses only the
+cache. The Swiss and German national feeds (160 and 230 MB) condense
+to 11 and 59 MB; a planet-wide cache should need some 20–40 GB of raw
+feeds plus a few GB of condensed ones.
+
+**Memory.** The condensed feeds live in memory-mapped scratch files
+in `--workdir`, so the kernel pages them in and out as needed; put
+`--workdir` on disk, not on a RAM disk. The heap holds little more
+than the feeds being condensed: 200–250 MB for the Swiss or German
+national feed, among the largest anywhere, so `--threads` still bounds
+memory. On the Swiss, German and bodo feeds, a warm run takes 16
+seconds and 100 MB of heap, and still finishes within a 300 MB memory
+limit; a cold run on 4 threads, which condenses all three at once,
+takes a minute and 430 MB of heap, within a 1 GB limit. A planet-wide
+run should fit on a 2 GB machine with 2–4 threads. Scratch disk needs
+about 12 bytes per stop time of the median week, a few GB planet-wide,
+plus the downloads in progress.

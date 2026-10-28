@@ -272,4 +272,28 @@ cargo run --release -- naturalist-observers --output-dir observers
 
 `--snapshot 2026-10-01` reads a given snapshot instead of the latest,
 and `--bucket` reads from one of GBIF's mirrors in other AWS regions.
-See the [README](../README.md#naturalist-observers) for the options.
+See [Running geosignals](running.md) for the container, the data BOMs,
+`datapackage.json` and scratch space.
+
+**Threads.** Most of the time goes to waiting for S3, so `--threads`
+can well exceed the number of CPUs. Each thread fetches columns one
+megabyte at a time as it decodes them, rather than whole column chunks.
+
+**Memory.** Nothing grows with the size of the snapshot except the
+observer tables, which keep each observer as a 64-bit hash of the
+name, a few million per dataset. Each reader thread decodes 16,384
+records at a time, holding about a megabyte of each column, and passes
+its (observer, pixel) pairs on in sorted pieces of at most 128 Ki.
+These go through an external sort, which spills a sorted run to
+`--workdir` once `--run-size` (32 Mi pairs, so 256 MB) are held for
+all layers together, merging the pieces rather than copying them
+together. A full run of the October 2026 snapshot with 32 threads took
+18 minutes on four CPUs and peaked at 1.2 GB of memory, against 2.4 GB
+for a first version that read whole column chunks. Capping glibc at
+two malloc arenas saved about a third (see [Running
+geosignals](running.md#scratch-space-and-memory)). On 500 eBird files
+with 32 threads, the static musl build peaked at 780 MB against 970 MB
+for glibc, and took 175 against 147 seconds; mimalloc instead of
+musl's allocator took 1.7 GB and was no faster.
+
+The three files come to about 79 MB together.
