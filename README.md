@@ -115,6 +115,9 @@ values, one bucket per value, as a GDAL Raster Attribute Table. GDAL
 any pixel value into a percentile. Bucket 0 counts pixels without
 nodes; no NoData value is set, since zero nodes is a measurement.
 
+For data analysts, [docs/osm-node-density.md](docs/osm-node-density.md)
+describes what the file means, its biases and its license.
+
 ## How it works
 
 1. Worker threads decode the PBF and map every node to the Hilbert index
