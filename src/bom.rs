@@ -415,7 +415,7 @@ fn license(l: &License) -> Value {
 }
 
 /// Size and digests of a file, as lowercase hex.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Hashes {
     pub bytes: u64,
     pub sha256: String,

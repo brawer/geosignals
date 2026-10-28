@@ -142,7 +142,7 @@ pub fn write_layers(
         resources.push(tiff);
         resources.push(bom);
     }
-    let doc = json!({
+    let mut doc = json!({
         "$schema": SCHEMA,
         "name": pkg.name,
         "id": pkg.id,
@@ -154,6 +154,10 @@ pub fn write_layers(
         "sources": sources,
         "resources": resources,
     });
+    // When all layers share a license, the package states it too.
+    if layers.iter().all(|l| l.license.id == layers[0].license.id) {
+        doc["licenses"] = json!([license_json(layers[0].license)]);
+    }
     save(layers[0].tiff, &doc)
 }
 
@@ -172,18 +176,23 @@ fn save(tiff: &Path, doc: &Value) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn build(pkg: &Package, files: &Files, bom_hashes: &Hashes) -> Value {
-    let created = crate::date::rfc3339(files.timestamp);
+/// The Frictionless source object for `input`, whose data is as of
+/// `timestamp` (seconds since the epoch).
+pub fn input_source(input: &bom::Input, timestamp: i64) -> Value {
     let mut source = json!({
-        "title": format!("{} {}", files.input.supplier.title, files.input.name),
-        "version": created,
+        "title": format!("{} {}", input.supplier.title, input.name),
+        "version": crate::date::rfc3339(timestamp),
     });
-    if let Some(url) = &files.input.url {
+    if let Some(url) = &input.url {
         source["path"] = json!(url);
     }
+    source
+}
+
+fn build(pkg: &Package, files: &Files, bom_hashes: &Hashes) -> Value {
     document(
         pkg,
-        vec![source],
+        vec![input_source(files.input, files.timestamp)],
         files.input.supplier.noun,
         files.timestamp,
         files.tiff,

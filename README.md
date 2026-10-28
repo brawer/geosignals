@@ -39,6 +39,17 @@ The output is named after the replication timestamp in the PBF header,
 such as `osm-node-density.2026-10-12.tiff` (the date is in UTC). Input
 without that timestamp is rejected.
 
+The same run also writes `osm-tagged-node-density.2026-10-12.tiff`,
+which only counts nodes with at least one tag. Tags about the edit
+rather than the feature don't count: `source` and every key starting
+with it, `created_by`, `note`, `fixme`, `FIXME`, `attribution` and
+`check_date`, also with a suffix such as `note:de`, and `survey:date`.
+Some of these belong on changesets, but imports sometimes put them on
+every node. Addresses (`addr:*`) don't count either: they are on a third
+of all tagged nodes, mostly imported address points that mirror the
+buildings the first raster already shows. Each GeoTIFF gets its own data
+BOM.
+
 Next to it, `osm-node-density.2026-10-12.cdx.json` is a data bill of
 materials in [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/)
 format. It records the osmsignals version, the planet it read (by name,
@@ -50,7 +61,7 @@ as the workflow `uid`.
 
 Finally, `datapackage.json` is a [Frictionless Data Package
 v2](https://datapackage.org/standard/data-package/) descriptor that
-points to both dated files by relative path, with their sizes and
+points to the dated files by relative path, with their sizes and
 SHA-256 hashes. Unlike them, it keeps its name and is replaced by
 each run, so clients can fetch it to find the current release.
 
