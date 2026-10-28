@@ -212,7 +212,10 @@ does this:
    POIs without a Wikipedia article.
 
 Clients that know a place's tags and rank can follow the same steps,
-reading v from this GeoTIFF.
+reading v from this GeoTIFF. For data analysts,
+[docs/nominatim-secondary-importance.md](docs/nominatim-secondary-importance.md)
+describes how Nominatim ranks search results, what the file means, its
+biases and its license.
 
 ## Public transport departures
 
