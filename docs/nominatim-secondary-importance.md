@@ -179,7 +179,9 @@ suburbs, neighbourhoods) and whose address rank is 13 or more. Larger
 units, such as countries, states, provinces and counties, are not
 painted at all. Where several areas overlap, such as a city and one of
 its suburbs, the pixel takes the higher of the two, usually the city.
-Where no area covers a place, the pixel is 0.
+Where no area covers a place, the pixel is 0. Place nodes, such as a
+village mapped as a single point, also count, as small circles around
+the point (see [How the raster was made](#how-the-raster-was-made)).
 
 An area's importance comes from its Wikipedia article, as described
 above. Without a match, it is a default for its rank. The defaults
@@ -207,9 +209,32 @@ Across painted pixels, the median importance is 0.36. A few samples:
 | Lauterbrunnen, a Swiss village | 0.48 |
 | The Nevada desert, rural Kansas | 0 |
 
-The highest value in the file, 0.85, is not in a capital, but in a
-few pixels in Maranhão, Brazil. We have not checked which area causes
-it.
+The highest value in the file, 0.85 (*v* = 55,416), is not in a
+capital. It is a mapping error. It sits in four pixels around 3.01° S,
+44.84° W (x 6150–6151, y 8465–8467), in the rural municipality of
+São João Batista in Maranhão, Brazil. The pixels around them hold the
+municipality's 0.43. The hamlet at that spot, Olinda dos Aranhas,
+scores 0.15 in today's Nominatim.
+
+The cause is a place node that existed from 23 January to 7 June 2024,
+so it was in the database when the file was made on 4 May 2024:
+[node 11542167247](https://www.openstreetmap.org/node/11542167247),
+"Povoado Olinda", tagged `place=neighbourhood`. A new mapper had tagged
+it with `wikidata=Q155` and `wikipedia=pt:Brasil`, the article on the
+whole country. Nominatim therefore gave this hamlet of 620 people the
+importance of Brazil, which is higher than that of Paris. The same
+mapper deleted the node in June 2024, and the hamlet has since been
+mapped again without the error.
+
+The four pixels are exactly those whose centres lie within 0.02° of the
+node. That is the radius Nominatim uses for a place of this rank when
+it matches places by location. So the published file also paints place
+nodes, as small circles, even though the scripts in the repository
+only paint polygons (see [How the raster was made](#how-the-raster-was-made)).
+
+Single pixels or small patches far above their surroundings are worth
+treating with suspicion, since one wrong `wikipedia` or `wikidata` tag
+is enough to cause them.
 
 ### Grid and encoding
 
@@ -259,7 +284,14 @@ The scripts of
 run inside a planet-wide Nominatim database. They split the world into
 tiles. For each tile, they take every polygon with a search rank below
 25, compute its importance, and rasterize it. Where polygons overlap,
-the highest value wins. Points are never painted, only areas.
+the highest value wins. The published scripts paint only polygons.
+The published file, however, also paints place nodes as small circles:
+the four pixels of the Maranhão peak described above match a circle of
+0.02° around a `place=neighbourhood` node exactly. That radius is
+Nominatim's `reverse_place_diameter` for places of search rank 20 and
+above. The file was apparently made with a variant of the scripts that
+also differs in the default values (see
+[What a pixel means](#what-a-pixel-means)).
 
 An area's value is its importance × ((address rank + 2) / 15) × 65536,
 rounded. The second factor uses integer division, so it is 0 for
