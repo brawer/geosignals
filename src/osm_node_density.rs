@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
 // SPDX-License-Identifier: MIT
 
-//! The `node-density` pipeline: PBF → sorted keys → pyramid → GeoTIFF.
+//! The `osm-node-density` pipeline: PBF → sorted keys → pyramid → GeoTIFF.
 
 use crate::cog::{Grid, Metadata, Spool};
 use crate::histogram::Histogram;
@@ -63,7 +63,7 @@ pub struct Summary {
 
 pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
     let start = Instant::now();
-    let workdir = Workdir::open(&cfg.workdir, "node-density")?;
+    let workdir = Workdir::open(&cfg.workdir, PACKAGE.name)?;
     std::fs::create_dir_all(&cfg.output_dir)
         .with_context(|| format!("creating {}", cfg.output_dir.display()))?;
     let opts = pbf::Options {

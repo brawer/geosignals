@@ -24,7 +24,7 @@ and km², counted from GTFS feeds.
 ## Usage
 
 ```sh
-cargo run --release -- node-density --output-dir .
+cargo run --release -- osm-node-density --output-dir .
 ```
 
 By default, this streams the most recent weekly planet dump from
@@ -63,7 +63,7 @@ user into the container so the output belongs to you:
 ```sh
 podman build -t osmsignals .
 podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$PWD:/data" \
-  osmsignals node-density --output-dir .
+  osmsignals osm-node-density --output-dir .
 ```
 
 Each release is also published as `ghcr.io/brawer/osmsignals` for

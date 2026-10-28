@@ -16,7 +16,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Computes OSM node density as a Cloud-Optimized GeoTIFF.
-    NodeDensity {
+    OsmNodeDensity {
         /// OSM PBF to read: a file, an http(s) URL, or "-" for standard
         /// input. Defaults to the most recent weekly planet dump, which
         /// is streamed over HTTPS without storing it.
@@ -198,7 +198,7 @@ fn limit_malloc_arenas() {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::NodeDensity {
+        Command::OsmNodeDensity {
             input,
             output_dir,
             workdir,
@@ -211,7 +211,7 @@ fn main() -> Result<()> {
         } => {
             let threads = default_threads(threads);
             let (reader, source) = open(&input)?;
-            let cfg = osmsignals::node_density::Config {
+            let cfg = osmsignals::osm_node_density::Config {
                 input: osmsignals::bom::Input::new(&source),
                 run_id,
                 output_dir,
@@ -223,7 +223,7 @@ fn main() -> Result<()> {
                 max_blocks: smoke_test.then_some(5),
             };
             let input = std::io::BufReader::with_capacity(1 << 20, reader);
-            let summary = osmsignals::node_density::run(input, &cfg)?;
+            let summary = osmsignals::osm_node_density::run(input, &cfg)?;
             eprintln!("{summary:#?}");
         }
         Command::NominatimSecondaryImportance {

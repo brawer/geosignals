@@ -515,7 +515,7 @@ mod tests {
                 b"https://github.com/brawer/osmsignals#osm-node-density"
             ),
             "urn:uuid:2c7bffea-cc30-533e-ac1d-dc7b4aefd158",
-            "data package id of node-density"
+            "data package id of osm-node-density"
         );
         assert_eq!(
             derived.replace('-', "")["urn:uuid:".len()..],

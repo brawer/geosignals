@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
 // SPDX-License-Identifier: MIT
 
-//! End-to-end tests of the node-density pipeline.
+//! End-to-end tests of the osm-node-density pipeline.
 
 mod common;
 
-use osmsignals::{encode, node_density, tile};
+use osmsignals::{encode, osm_node_density, tile};
 use std::path::Path;
 
 /// Output of a run: its summary, the decoded image, the data BOM, and
 /// the SHA-256 of the image file.
 struct Output {
-    summary: node_density::Summary,
+    summary: osm_node_density::Summary,
     image: common::Image,
     bom: serde_json::Value,
     datapackage: serde_json::Value,
@@ -21,7 +21,7 @@ struct Output {
 
 fn run(pbf: &Path, run_size: usize) -> Output {
     let dir = tempfile::tempdir().unwrap();
-    let cfg = node_density::Config {
+    let cfg = osm_node_density::Config {
         input: osmsignals::bom::Input::new("zugerland.osm.pbf"),
         run_id: "test-run".into(),
         output_dir: dir.path().to_path_buf(),
@@ -33,7 +33,7 @@ fn run(pbf: &Path, run_size: usize) -> Output {
         sample_rate: 64,
     };
     let input = std::fs::File::open(pbf).unwrap();
-    let summary = node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
+    let summary = osm_node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
     let tiff = std::fs::read(&summary.output).unwrap();
     let image = common::read(&tiff);
     let digest = ring::digest::digest(&ring::digest::SHA256, &tiff);
@@ -208,14 +208,14 @@ fn restart_after_crash() {
     let output = dir.path().join("osm-node-density.2026-01-27.tiff");
     let partial = dir.path().join("osm-node-density.2026-01-27.tiff.partial");
     // What a run killed halfway through leaves behind.
-    let stale = work.join("node-density/tmp");
+    let stale = work.join("osm-node-density/tmp");
     std::fs::create_dir_all(&stale).unwrap();
     std::fs::write(stale.join("spool-10"), vec![7u8; 1000]).unwrap();
     std::fs::write(stale.join(".tmpAbC123"), b"half a run").unwrap();
     std::fs::write(&partial, b"half a file").unwrap();
     std::fs::write(work.join("planet.osm.pbf"), b"not ours").unwrap();
 
-    let cfg = node_density::Config {
+    let cfg = osm_node_density::Config {
         input: osmsignals::bom::Input::new("zugerland.osm.pbf"),
         run_id: "test-run".into(),
         output_dir: dir.path().to_path_buf(),
@@ -227,7 +227,7 @@ fn restart_after_crash() {
         sample_rate: 64,
     };
     let input = std::fs::File::open(ZUGERLAND).unwrap();
-    let summary = node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
+    let summary = osm_node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
     assert_eq!(summary.nodes, 1790);
     assert_eq!(summary.output, output);
     common::read(&std::fs::read(&output).unwrap());
