@@ -245,8 +245,13 @@ Feeds that Transitous skips, that need credentials, or that are not
 GTFS are left out. By default (`--licenses open`) only feeds under a
 license we may republish with attribution are used: CC0, CC-BY,
 ODbL, etalab, NLOD, DL-DE and similar, but not other share-alike,
-non-commercial or unknown licenses. `--licenses any` uses all feeds,
-for internal use. `--only ch/` restricts a run to some regions.
+non-commercial or unknown licenses. A feed without a known license
+also counts if the Transitland Atlas records that its terms allow
+derived products without banning commercial use, redistribution or
+requiring share-alike, as for many North American agencies.
+`src/transit/checked.json` holds licenses we checked ourselves, and
+can add feeds that Transitous doesn't list, such as England's Bus Open
+Data Service. `--licenses any` uses all feeds, for internal use. `--only ch/` restricts a run to some regions.
 
 **Cache.** `--cache` is a directory or an S3-compatible bucket
 (`s3://bucket/prefix`, configured with `AWS_ACCESS_KEY_ID`,

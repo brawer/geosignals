@@ -1,0 +1,17 @@
+{
+  "comment": "Feeds and licenses that osmsignals checked itself. An entry with a url adds a feed that Transitous does not list. Every entry sets the license of the feed with its id, replacing what the catalogs say. Keep 'source' pointing to where the license is stated, and 'checked' to the day someone read it.",
+  "feeds": [
+    {
+      "id": "gb/bods",
+      "url": "https://data.bus-data.dft.gov.uk/timetable/download/gtfs-file/all/",
+      "description": "Department for Transport, Bus Open Data Service: timetables of local bus, tram and ferry services in England, plus the London Underground, DLR and Tramlink. Transitous includes this data in gb/great-britain, merged with National Rail timetables whose terms do not allow us to republish.",
+      "license": {
+        "spdx": "OGL-UK-3.0",
+        "url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+        "attribution": "Contains public sector information licensed under the Open Government Licence v3.0. Source: Department for Transport, Bus Open Data Service."
+      },
+      "source": "https://findtransportdata.dft.gov.uk/dataset/bus-open-data---download-all-timetable-data--18335fb19c4",
+      "checked": "2026-10-28"
+    }
+  ]
+}

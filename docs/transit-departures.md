@@ -58,12 +58,21 @@ CC0. Some entries point into two other catalogs, which we also read:
 All three are downloaded on each run. The data BOM records the git
 commit each catalog was at.
 
-**Feeds.** The catalog of 27 October 2026 lists 1,485 static GTFS
+**Feeds.** The catalog of 27 October 2026 lists 1,483 static GTFS
 feeds that resolve through Transitous and the Atlas, in 128 regions.
 Another 633 point into the Mobility Database. France (446), Poland
 (139), Hungary (86) and Canada (98) have the most entries. One national
 feed can cover a whole country, though: Germany has 9 entries and
 Switzerland 3.
+
+We also add feeds that Transitous doesn't list, whose licenses we
+checked ourselves, from
+[`src/transit/checked.json`](../src/transit/checked.json). So far this
+is one feed: the Department for Transport's
+[Bus Open Data Service](https://www.bus-data.dft.gov.uk) for England,
+under the Open Government Licence. Transitous has this data too, but
+merged with National Rail timetables whose terms don't allow us to
+republish them.
 
 **What we leave out.**
 
@@ -195,15 +204,24 @@ The overviews give the same result.
 open`) only uses feeds whose license allows republishing with
 attribution (see below). Many feeds have no license in the catalog, and
 those are left out even if the publisher would allow reuse. In the
-catalog of 27 October 2026, 784 of the 1,485 feeds qualify. By region:
+catalog of 27 October 2026, 935 of the 1,484 feeds qualify, 150 of
+them only through the Transitland Atlas's summary of their terms. By
+region:
 
-- **Mostly covered.** France (430 of 446), Poland (137 of 139),
-  Estonia, Finland, Australia (28 of 31) and the Netherlands.
-- **Partly covered.** Germany (5 of 9, including the national DELFI
-  feed), Italy (30 of 43) and Hungary (13 of 86).
-- **Missing.** Switzerland, Austria, Great Britain, most of Canada (13
-  of 98) and the United States (3 of 341). Their catalog entries carry
-  no license.
+- **Mostly covered.** France (430 of 446), Poland (137 of 139), Italy
+  (39 of 43), Estonia, Finland, Australia (28 of 31) and the
+  Netherlands.
+- **Partly covered.**
+  - Germany (5 of 7, including the national DELFI feed).
+  - The United States (111 of 341), including the New York MTA's buses,
+    LIRR and Metro-North, LA Metro, WMATA, SFMTA, the MBTA, Denver RTD
+    and Sound Transit. Not included are TriMet, NJ Transit and MARTA.
+  - Canada (43 of 98).
+  - Hungary (13 of 86).
+  - Great Britain: buses, trams and ferries in England from BODS, but
+    no trains, Scotland, Wales or Northern Ireland.
+- **Missing.** Switzerland and Austria. Their catalog entries carry no
+  license.
 
 The Mobility Database entries come on top of these counts. A missing
 country shows up as zero departures, which looks the same as having no
@@ -256,11 +274,30 @@ them and republishing the result under ODbL with attribution:
 - the ODbL itself.
 
 Feeds under other share-alike licenses, NonCommercial or NoDerivatives
-licenses, or without a license are left out. A feed's license is the
-SPDX identifier that Transitous gives, or else the one in the
-Transitland Atlas. The Mobility Database only gives a link to the
-license terms. We record that link in the BOM, but it does not qualify
-a feed on its own.
+licenses are left out. A feed's license is decided in this order:
+
+1. **Our own check.** For feeds in
+   [`checked.json`](../src/transit/checked.json), the license whose
+   terms we read ourselves.
+2. **SPDX identifier.** Otherwise, the SPDX identifier that Transitous
+   gives, or else the one in the Transitland Atlas.
+3. **Atlas summary.** For a feed without a known license, the Atlas
+   summary of its terms of use. Many agencies, especially in North
+   America, publish feeds under their own terms instead of a standard
+   license, and the Atlas records what those terms allow. We use the
+   feed if the terms allow derived products and don't forbid
+   commercial use, redistribution or require share-alike. Its
+   attribution text, or else its attribution instructions, goes into
+   the BOM.
+
+The Mobility Database only gives a link to the license terms. We record
+that link in the BOM, but it does not qualify a feed on its own. The
+run report gives each feed's license, or the permission it was used
+under.
+
+The Atlas summary is a third party's reading of each agency's terms,
+not a license. If you need certainty for one region, read the terms
+linked from the BOM.
 
 Attribution is per feed. The data BOM lists every feed that went in,
 with its license and the attribution text its publisher asks for. The

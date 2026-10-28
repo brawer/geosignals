@@ -22,3 +22,9 @@ SPDX-License-Identifier = "MIT"
 path = "tests/data/*.osm.pbf"
 SPDX-FileCopyrightText = "OpenStreetMap contributors"
 SPDX-License-Identifier = "ODbL-1.0"
+
+# Data files in JSON, which cannot carry an SPDX header comment.
+[[annotations]]
+path = "src/transit/checked.json"
+SPDX-FileCopyrightText = "2026 Sascha Brawer <sascha@brawer.ch>"
+SPDX-License-Identifier = "MIT"
