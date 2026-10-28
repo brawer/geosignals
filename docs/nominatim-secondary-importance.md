@@ -207,9 +207,26 @@ Across painted pixels, the median importance is 0.36. A few samples:
 | Lauterbrunnen, a Swiss village | 0.48 |
 | The Nevada desert, rural Kansas | 0 |
 
-The highest value in the file, 0.85, is not in a capital, but in a
-few pixels in Maranhão, Brazil. We have not checked which area causes
-it.
+The highest value in the file, 0.85 (*v* = 55,416), is not in a
+capital. It is a mapping error. It sits in four pixels around 3.01° S,
+44.84° W (x 6150–6151, y 8465–8467), in the rural municipality of
+São João Batista in Maranhão, Brazil. The pixels around them hold the
+municipality's 0.43. The hamlet at that spot, Olinda dos Aranhas,
+scores 0.15 in today's Nominatim.
+
+In October 2026, Nominatim had no area covering these pixels, only a
+place node and a few unpaved roads. The value must therefore come from
+a small area that was in OpenStreetMap in 2024 and has since been
+removed or retagged. Only a Wikipedia article linked more often than
+the one on Paris can score above Paris's 0.83, and such articles are
+mostly about countries. So the area was most likely tagged with the
+article on Brazil (Q155), which ranks just above Paris in Nominatim's
+Wikipedia table. We could not confirm this, because we could not reach
+OpenStreetMap's edit history.
+
+Single pixels or small patches far above their surroundings are worth
+treating with suspicion, since one wrong `wikipedia` or `wikidata` tag
+is enough to cause them.
 
 ### Grid and encoding
 
