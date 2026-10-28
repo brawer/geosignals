@@ -258,6 +258,11 @@ pub fn run(cfg: &Config) -> Result<Summary> {
             "departures_per_week": departures,
             "duplicate_departures_per_week": duplicates,
         });
+        if let Some(spdx) = &feed.license.spdx {
+            entry["license"] = json!(spdx);
+        } else if let Some(p) = &feed.license.permission {
+            entry["permission"] = json!(p);
+        }
         if let Status::Stale { error } = &f.status {
             entry["error"] = json!(error);
             summary.stale += 1;

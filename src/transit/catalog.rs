@@ -38,6 +38,10 @@ pub struct License {
     pub spdx: Option<String>,
     /// Page with the license or terms of use.
     pub url: Option<String>,
+    /// Why we may republish a feed that has no open SPDX license, such
+    /// as terms that the Transitland Atlas summarizes as allowing
+    /// derived products.
+    pub permission: Option<String>,
     /// Attribution the publisher asks for.
     pub attribution: Option<String>,
 }
@@ -69,11 +73,27 @@ pub const OPEN_LICENSES: &[&str] = &[
 ];
 
 impl License {
+    /// Whether we may combine the feed with others and republish the
+    /// result under ODbL with attribution. A known SPDX license decides;
+    /// without one, a recorded permission does.
     pub fn is_open(&self) -> bool {
-        self.spdx
-            .as_deref()
-            .is_some_and(|id| OPEN_LICENSES.iter().any(|o| o.eq_ignore_ascii_case(id)))
+        match self.spdx.as_deref() {
+            Some(id) => OPEN_LICENSES.iter().any(|o| o.eq_ignore_ascii_case(id)),
+            None => self.permission.is_some(),
+        }
     }
+}
+
+/// What the Transitland Atlas says about a feed's terms of use, as a
+/// permission if they allow what we do: derived products, without a
+/// ban on commercial use, redistribution, or a share-alike duty.
+fn atlas_permission(license: &Value) -> Option<String> {
+    let says = |k: &str| license[k].as_str().unwrap_or("unknown");
+    (says("create_derived_product") == "yes"
+        && says("commercial_use_allowed") != "no"
+        && says("redistribution_allowed") != "no"
+        && says("share_alike_optional") != "no")
+        .then(|| "Transitland Atlas: terms allow derived products".to_string())
 }
 
 /// A source we do not read, and why.
@@ -157,6 +177,8 @@ pub fn load(transitous: &FeedFiles, catalogs: &Catalogs) -> Result<(Vec<Feed>, V
         }
         new
     });
+    let regions: Vec<&str> = transitous.files.iter().map(|(r, _)| r.as_str()).collect();
+    apply_checked(&mut feeds, &regions, CHECKED)?;
     Ok((feeds, skipped))
 }
 
@@ -214,12 +236,23 @@ fn resolve(source: &Value, catalogs: &Catalogs) -> Result<Option<Feed>, String> 
             if !feed["authorization"].is_null() {
                 return Err("needs authorization".into());
             }
+            if feed["spec"].as_str().is_some_and(|s| s != "gtfs") {
+                return Ok(None); // GTFS Realtime, GBFS
+            }
             let urls = &feed["urls"];
             let url = url_override
                 .or(urls["static_current"].as_str())
                 .or(urls["static_historic"][0].as_str())
                 .ok_or_else(|| format!("{id} has no static GTFS URL"))?;
-            let atlas = license_of(&feed["license"], "spdx_identifier", "attribution_text");
+            let lic = &feed["license"];
+            let mut atlas = license_of(lic, "spdx_identifier", "attribution_text");
+            atlas.permission = atlas_permission(lic);
+            if atlas.attribution.is_none() && lic["use_without_attribution"] == "no" {
+                atlas.attribution = lic["attribution_instructions"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+            }
             license = merge(license, atlas);
             vec![url.to_string()]
         }
@@ -253,6 +286,7 @@ fn resolve(source: &Value, catalogs: &Catalogs) -> Result<Option<Feed>, String> 
                     spdx: get("license.spdx_identifier").map(str::to_string),
                     url: get("urls.license").map(str::to_string),
                     attribution: None,
+                    permission: None,
                 },
             );
             urls
@@ -273,6 +307,7 @@ fn license_of(v: &Value, spdx_key: &str, attribution_key: &str) -> License {
         spdx: s(spdx_key),
         url: s("url"),
         attribution: s(attribution_key),
+        permission: None,
     }
 }
 
@@ -282,7 +317,43 @@ fn merge(a: License, b: License) -> License {
         spdx: a.spdx.or(b.spdx),
         url: a.url.or(b.url),
         attribution: a.attribution.or(b.attribution),
+        permission: a.permission.or(b.permission),
     }
+}
+
+/// Feeds and licenses that we checked ourselves; see `checked.json`.
+const CHECKED: &str = include_str!("checked.json");
+
+/// Applies [`CHECKED`]: an entry with a `url` adds a feed that
+/// Transitous does not list, if Transitous has its region, and every
+/// entry sets the license of the feed with its id, replacing what the
+/// catalogs say.
+fn apply_checked(feeds: &mut Vec<Feed>, regions: &[&str], checked: &str) -> Result<()> {
+    let doc: Value = serde_json::from_str(checked).context("parsing checked.json")?;
+    for entry in doc["feeds"].as_array().into_iter().flatten() {
+        let id = entry["id"]
+            .as_str()
+            .context("checked.json: entry without id")?;
+        let checked = entry["checked"].as_str().unwrap_or("unknown date");
+        let mut license = license_of(&entry["license"], "spdx", "attribution");
+        license.permission = Some(format!("checked by osmsignals on {checked}"));
+        match feeds.iter_mut().find(|f| f.id == id) {
+            Some(feed) => feed.license = license,
+            None => {
+                let region = id.split('/').next().unwrap_or("");
+                if let Some(url) = entry["url"].as_str()
+                    && regions.contains(&region)
+                {
+                    feeds.push(Feed {
+                        id: id.to_string(),
+                        urls: vec![url.to_string()],
+                        license,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -312,6 +383,80 @@ mod tests {
 
     fn resolve_one(source: Value) -> Result<Option<Feed>, String> {
         resolve(&source, &catalogs())
+    }
+
+    #[test]
+    fn atlas_terms_grant_permission() {
+        let mut c = catalogs();
+        let mut add = |id: &str, license: Value| {
+            c.atlas.insert(
+                id.into(),
+                json!({"id": id, "spec": "gtfs", "license": license,
+                       "urls": {"static_current": format!("https://{id}.example/")}}),
+            );
+        };
+        add(
+            "derived",
+            json!({"create_derived_product": "yes", "use_without_attribution": "no",
+                   "attribution_instructions": "Acknowledge MassDOT"}),
+        );
+        add(
+            "noncommercial",
+            json!({"create_derived_product": "yes", "commercial_use_allowed": "no"}),
+        );
+        add("silent", json!({}));
+        add(
+            "nc-spdx",
+            json!({"spdx_identifier": "CC-BY-NC-4.0", "create_derived_product": "yes"}),
+        );
+        add("rt", json!({}));
+        c.atlas.get_mut("rt").unwrap()["spec"] = json!("gtfs-rt");
+        let get = |id: &str| {
+            resolve(
+                &json!({"name": id, "type": "transitland-atlas", "transitland-atlas-id": id}),
+                &c,
+            )
+        };
+        let f = get("derived").unwrap().unwrap();
+        assert!(f.license.is_open());
+        assert_eq!(
+            f.license.attribution.as_deref(),
+            Some("Acknowledge MassDOT")
+        );
+        assert!(!get("noncommercial").unwrap().unwrap().license.is_open());
+        assert!(!get("silent").unwrap().unwrap().license.is_open());
+        // A known license decides, whatever the flags say.
+        assert!(!get("nc-spdx").unwrap().unwrap().license.is_open());
+        // Not static GTFS: ignored, not reported as skipped.
+        assert_eq!(get("rt"), Ok(None));
+    }
+
+    #[test]
+    fn checked_licenses() {
+        let checked = r#"{"feeds": [
+            {"id": "ch/sbb", "license": {"spdx": "CC-BY-4.0", "attribution": "SBB"},
+             "checked": "2026-10-28"},
+            {"id": "gb/bods", "url": "https://bods.example/all/",
+             "license": {"spdx": "OGL-UK-3.0"}},
+            {"id": "xx/new", "url": "https://xx.example/"}
+        ]}"#;
+        let mut feeds = vec![Feed {
+            id: "ch/sbb".into(),
+            urls: vec!["https://sbb.example/".into()],
+            license: License::default(),
+        }];
+        apply_checked(&mut feeds, &["ch", "gb"], checked).unwrap();
+        let ids: Vec<&str> = feeds.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(ids, ["ch/sbb", "gb/bods"], "xx is not a Transitous region");
+        assert!(feeds.iter().all(|f| f.license.is_open()));
+        assert_eq!(feeds[0].urls, ["https://sbb.example/"]);
+        assert_eq!(feeds[0].license.attribution.as_deref(), Some("SBB"));
+        assert_eq!(
+            feeds[0].license.permission.as_deref(),
+            Some("checked by osmsignals on 2026-10-28")
+        );
+        // The file that ships parses.
+        apply_checked(&mut Vec::new(), &[], CHECKED).unwrap();
     }
 
     #[test]
