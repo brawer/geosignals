@@ -62,6 +62,13 @@ The files cover all years in the snapshot, not one season or year.
 Most of the data is recent: both projects have grown steeply, so the
 last few years dominate.
 
+The two datasets are not equally fresh. iNaturalist sends its data to
+GBIF continuously; the October 2026 snapshot has observations up to
+the last weeks before it. The eBird dataset is
+[released to GBIF once a year](https://www.gbif.org/dataset/4fa7b334-ce0d-4e88-aaae-2e0c138d049e),
+and in the October 2026 snapshot it ends in December 2024. Its newest
+observations are therefore 10 to 22 months old.
+
 ## What a pixel means
 
 A pixel counts **distinct observers**, not records. Someone who
@@ -125,7 +132,7 @@ spots show this most.
 
 So use the overview at the zoom level you need. Don't build your own
 overviews by resampling the finest level, because summing or averaging
-would count travellers more than once. The counts are exact at every
+would count observers more than once. The counts are exact at every
 level, not estimated.
 
 ## How it is computed
@@ -142,7 +149,12 @@ level, not estimated.
      12.5 M, almost all from iNaturalist (see below). Records without a
      stated uncertainty are kept.
    - The record has an observer. We dropped 28 without one.
-   - The license is CC0, CC BY or CC BY-NC.
+   - The license is CC0, CC BY or CC BY-NC. In October this dropped no
+     records at all: iNaturalist only passes observations under these
+     three licenses to GBIF, so ShareAlike, NoDerivatives and
+     unlicensed observations never reach the snapshot, and all eBird
+     records are CC0 or CC BY. On iNaturalist itself, they make up about 4%
+     of the observations with an open photo license.
 3. **Counting.** Every remaining record becomes an (observer, pixel)
    pair. An external sort brings the pairs in order of observer, then
    pixel. Pixel keys follow a Hilbert curve, where dropping the last
@@ -171,10 +183,23 @@ nature is.
 which put a single point on a park, a lake or a reserve. These pixels
 stand out sharply, while the area around them looks empty, even if
 people walked all over it. Travelling checklists cover a route of up
-to several kilometres but carry one point, which the observer picks,
-often where the route started. eBird also hides some sensitive species
-from its public data. That matters little for observer counts, since
-such checklists usually list other species too.
+to several kilometres but carry one point: eBird
+[asks birders](https://support.ebird.org/en/support/solutions/articles/48001059718)
+to plot the starting point, or a hotspot that best describes the route.
+So a pixel may stand for a whole walk that started there.
+
+**eBird sensitive species.** eBird keeps a list of
+[sensitive species](https://www.audubon.org/magazine/ebird-now-censoring-sightings-325-risk-species),
+such as some owls, parrots and raptors that suffer from poaching or
+disturbance, and leaves their records out of its public outputs. In
+GBIF's copy, they are missing entirely. For example, GBIF holds
+[29,588 Gyrfalcon records](https://www.gbif.org/occurrence/search?taxon_key=8069880),
+723 of them from iNaturalist, but
+[none from eBird](https://www.gbif.org/occurrence/search?taxon_key=8069880&dataset_key=4fa7b334-ce0d-4e88-aaae-2e0c138d049e).
+The same holds for the Helmeted Hornbill, the Philippine Eagle and the
+Night Parrot (checked on 28 October 2026). This matters little for
+observer counts, since the same birders report other species from the
+same places.
 
 **iNaturalist blurring.** iNaturalist moves about 6% of observations to
 a random point in a 0.2° box, about 22 km wide. It does this when the
