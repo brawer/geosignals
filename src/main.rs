@@ -223,7 +223,17 @@ fn main() -> Result<()> {
                 max_blocks: smoke_test.then_some(5),
             };
             let input = std::io::BufReader::with_capacity(1 << 20, reader);
-            let summary = geosignals::osm_node_density::run(input, &cfg)?;
+            // The second pass reads where the first one did, after
+            // redirects, so both see the same planet.
+            let reopen = || -> Result<Box<dyn Read + Send>> {
+                let (reader, _) = open(&source)?;
+                Ok(Box::new(std::io::BufReader::with_capacity(1 << 20, reader)))
+            };
+            if source == "-" {
+                eprintln!("standard input can't be read twice, so ways won't count");
+            }
+            let reopen = (source != "-").then_some(&reopen as geosignals::osm_node_density::Reopen);
+            let summary = geosignals::osm_node_density::run(input, reopen, &cfg)?;
             eprintln!("{summary:#?}");
         }
         Command::NominatimSecondaryImportance {

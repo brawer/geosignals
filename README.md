@@ -29,8 +29,9 @@ cargo run --release -- osm-node-density --output-dir .
 
 By default, this streams the most recent weekly planet dump from
 `planet.openstreetmap.org` over HTTPS, without storing it. Since the
-planet is sorted, reading stops once all nodes are seen, so only part
-of the file gets downloaded. If the connection drops, reading resumes
+planet is sorted, the first pass stops once all ways are seen, and the
+second once all nodes needed for the ways are found, so the relations
+are never downloaded. If the connection drops, reading resumes
 with a range request. `--input` also takes a local file, another URL,
 or `-` for standard input. `--smoke-test` reads only the first few
 blocks, to check that everything works without processing the planet.
@@ -49,6 +50,16 @@ every node. Addresses (`addr:*`) don't count either: they are on a third
 of all tagged nodes, mostly imported address points that mirror the
 buildings the first raster already shows. Each GeoTIFF gets its own data
 BOM.
+
+Shops, schools or parks are often drawn as outlines rather than points,
+so the tagged layer also counts every way with an `amenity`, `shop`,
+`tourism`, `leisure`, `office`, `craft`, `healthcare`, `historic`,
+`man_made` or `public_transport` tag, as one point at its first node.
+Ways without such a tag, such as plain buildings and roads, don't count.
+Since the planet stores nodes before ways, this takes a second pass over
+the nodes: the first pass reads the whole planet and notes the first
+node of each such way, and the second one looks up where they are. Input
+from standard input can't be read twice, so ways don't count there.
 
 Next to it, `osm-node-density.2026-10-12.cdx.json` is a data bill of
 materials in [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/)

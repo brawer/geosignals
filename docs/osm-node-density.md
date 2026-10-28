@@ -13,26 +13,33 @@ how much has been built and mapped at a place. It doesn't count people
 or visits, and it measures the work of mappers as much as the world
 they map.
 
+A second raster counts only the nodes that describe something, such as
+a shop, a tree or a bench, together with points of interest drawn as
+ways. It is a sparser signal of how many features are mapped at a
+place; see [the tagged layer](#the-tagged-layer).
+
 This page is for data analysts who consider using the file. It covers
-what the file contains, how it is computed, its artifacts and biases,
+what the files contain, how it is computed, its artifacts and biases,
 and its license. The numbers come from the run on the planet of
 19 October 2026.
 
 ## The files
 
-Each release has one Cloud-Optimized GeoTIFF, a data bill of materials
-(`.cdx.json`) and a `datapackage.json`:
+Each release has two Cloud-Optimized GeoTIFFs, a data bill of
+materials (`.cdx.json`) for each, and one `datapackage.json`:
 
 | File | What it holds |
 | --- | --- |
 | `osm-node-density.2026-10-19.tiff` | The raster, 2.8 GB |
 | `osm-node-density.2026-10-19.cdx.json` | The geosignals release that made the raster, the planet it read, and the raster's SHA-256 and SHA-512 |
-| `datapackage.json` | The above as a Frictionless data package, with the license |
+| `osm-tagged-node-density.2026-10-19.tiff` | The tagged layer, 332 MB |
+| `osm-tagged-node-density.2026-10-19.cdx.json` | The same for the tagged layer |
+| `datapackage.json` | All of the above as a Frictionless data package, with the license |
 
 The date in each name is the date of the planet's data, taken from the
 replication timestamp in its header. A dated file never changes; the
 next release gets new files. The same planet and geosignals release
-always give the same raster, byte for byte.
+always give the same rasters, byte for byte.
 
 ## The source
 
@@ -43,17 +50,19 @@ map, without history: deleted nodes and old positions of moved nodes
 are not in it.
 
 The planet of 19 October 2026 has 10,949,467,954 nodes. They all count
-equally, whether they carry tags or not. Most nodes have no tags of
-their own and only give the shape of a way: the outline of a building,
-the course of a road, the edge of a forest.
+equally in the main raster, whether they carry tags or not. Most nodes
+have no tags of their own and only give the shape of a way: the outline
+of a building, the course of a road, the edge of a forest.
 
-The planet is sorted by type, nodes first. A run streams it over HTTPS
-and stops reading where the ways begin, so it never stores the file
-and downloads only part of it.
+The planet is sorted by type: nodes, then ways, then relations. A run
+streams it over HTTPS and stops reading where the relations begin.
+It then reads the nodes a second time, to find where the ways of the
+tagged layer are. It never stores the planet and never downloads the
+relations.
 
 ## What a pixel means
 
-A pixel counts the **nodes** whose coordinates fall into it, divided by
+In the main raster, a pixel counts the **nodes** whose coordinates fall into it, divided by
 the pixel's area. Ways, relations and tags are not looked at. A
 building with 40 corners adds 40 nodes, and a node shared by two ways
 counts once.
@@ -126,24 +135,84 @@ with about 23,000 to 27,000 nodes per km². At the finest level, the
 densest pixels are single objects mapped in great detail rather than
 cities (see below).
 
+## The tagged layer
+
+The second raster, `osm-tagged-node-density`, uses the same grid,
+encoding and overviews as the main one. It counts fewer things:
+
+- **Nodes with tags that describe something.** Tags about the mapping
+  itself don't count: any `source` key (`source`, `source:geometry`
+  and the like), `created_by`, `note`, `fixme`, `FIXME`, `attribution`,
+  `check_date` and `survey:date`. Imports often set such tags on every
+  node, including the corners of buildings. Address tags (`addr:*`)
+  don't count either, so a node that is only an address point is left
+  out, while a shop with an address counts.
+- **Points of interest drawn as ways.** Many shops, schools and parks
+  are mapped as outlines rather than as single nodes. A way counts if
+  it has one of the keys `amenity`, `shop`, `tourism`, `leisure`,
+  `office`, `craft`, `healthcare`, `historic`, `man_made` or
+  `public_transport`. It counts once, at the position of its first
+  node.
+
+In October, 210,532,191 nodes counted (1.9% of all nodes) and
+35,698,342 ways, so the layer's `NODES` metadata says 246,230,533.
+Of the 68.7 billion pixels at the finest level, 90.2 million (0.13%)
+are not empty. Among those, the densities are spread like this:
+
+| Percentile | Value | Features per km² |
+| ---: | ---: | ---: |
+| 10% | 2071 | 52 |
+| 25% | 2112 | 69 |
+| 50% | 2171 | 104 |
+| 75% | 2263 | 197 |
+| 90% | 2384 | 455 |
+| 99% | 2626 | 2,435 |
+| 99.9% | 2783 | 7,231 |
+| maximum | 3263 | 201,441 |
+
+Half of the non-empty pixels hold a single feature or two. At zoom 12,
+the densest areas are again city centres, but a different set from the
+main raster: Paris (about 5,400 features per km²), Berlin, Edinburgh,
+Gothenburg, Warsaw, Montréal, Helsinki and Brussels. This reflects
+where mappers record shops, trees, benches and street furniture.
+
+**Biases of the tagged layer.** Imports of trees, street lamps or
+similar objects still show up, because those nodes carry tags that
+count; Gothenburg's mapped trees are a likely example (inferred, not
+checked). The densest pixels we located are in Berlin (999 features at
+52.5141° N, 13.3793° E, presumably the stelae of the Holocaust
+Memorial), Spain, Gothenburg, Vienna, Munich, Paris, Strasbourg and
+Ashgabat. Points of interest drawn as multipolygon relations, such as
+some large parks or campuses, are missed, since relations aren't read.
+A way counts at its first node rather than its centre, which can put
+a large site into a neighbouring pixel. Ways with none of the listed
+keys, such as plain buildings or roads, don't count at all.
+
 ## How it is computed
 
 1. **Reading.** Worker threads decode the planet's node blocks and map
-   each node to the Hilbert index of its zoom-18 pixel. Reading stops
-   at the first block of ways.
-2. **Sorting.** Pixel keys are sorted in memory-bounded runs, counted,
+   each node to the Hilbert index of its zoom-18 pixel, once for the
+   main raster and once more if it has tags that count. For each
+   point-of-interest way, the ID of its first node is kept. Reading
+   stops at the first block of relations.
+2. **Finding the ways.** The ways' first-node IDs are sorted, and the
+   nodes are read again. The planet's nodes are sorted by ID too, so
+   both lists can be walked side by side. This pass stops once all the
+   wanted nodes are found.
+3. **Sorting.** Pixel keys are sorted in memory-bounded runs, counted,
    and spilled to disk, compressed.
-3. **Building the pyramid.** A merge of the runs streams
+4. **Building the pyramid.** A merge of the runs streams
    `(pixel, count)` pairs in Hilbert order. The Hilbert curve visits
    every subtree in one stretch, so only the chain of tiles from the
    world down to the current zoom-10 tile is in memory at any time.
    Finished tiles are encoded and added into their parent.
-4. **Writing.** Tiles are written into the GeoTIFF in the order of a
+5. **Writing.** Tiles are written into the GeoTIFF in the order of a
    Cloud-Optimized GeoTIFF: smallest overview first. Tiles without any
    nodes are not stored, and readers see them as zero.
 
-The October run took 85 minutes on a machine with 4 CPU cores, of
-which reading and sorting the nodes took 39 minutes.
+The October run took 2 hours 54 minutes on a machine with 4 CPU
+cores: 80 minutes for the first pass over the planet, 28 for the
+second, 53 for building the main raster and 12 for the tagged one.
 
 ## Artifacts and biases
 
@@ -205,4 +274,6 @@ cargo run --release -- osm-node-density --output-dir .
 
 `--input` reads a local file, another URL, or standard input instead
 of the latest planet. `--smoke-test` reads only the first few blocks.
-See the [README](../README.md#usage) for the other options.
+See the [README](../README.md#usage) for the other options. Standard
+input can't be read twice, so with `--input -` the tagged layer
+counts only nodes, not ways.

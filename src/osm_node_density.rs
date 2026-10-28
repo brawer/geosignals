@@ -62,8 +62,11 @@ pub struct Summary {
     pub pixels: u64,
     pub tiles_per_zoom: Vec<u64>,
     pub bytes_per_zoom: Vec<u64>,
-    /// The layer of nodes with tags; see [`pbf::counts_as_tag`] for the
-    /// tags that count.
+    /// Ways that are points of interest; see [`pbf::is_poi`].
+    pub poi_ways: u64,
+    /// The layer of nodes with tags, plus the first node of each
+    /// point-of-interest way; see [`pbf::counts_as_tag`] for the tags
+    /// that count.
     pub tagged: Output,
 }
 
@@ -97,14 +100,21 @@ pub struct Output {
     pub bom: PathBuf,
     pub hashes: crate::bom::Hashes,
     /// Nodes that went into the layer, including those outside Web
-    /// Mercator.
+    /// Mercator. For the tagged layer, this includes the ways found in
+    /// Web Mercator.
     pub nodes: u64,
     pub pixels: u64,
     pub tiles_per_zoom: Vec<u64>,
     pub bytes_per_zoom: Vec<u64>,
 }
 
-pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
+/// Opens the input again, for a second pass over its nodes.
+pub type Reopen<'a> = &'a dyn Fn() -> Result<Box<dyn Read + Send>>;
+
+/// Reads `input` and writes both layers. If the input can be opened
+/// again with `reopen`, ways that are points of interest also count in
+/// the tagged layer; see [`pbf::is_poi`].
+pub fn run<R: Read + Send>(input: R, reopen: Option<Reopen>, cfg: &Config) -> Result<Summary> {
     let start = Instant::now();
     let workdir = Workdir::open(&cfg.workdir, PACKAGE.name)?;
     std::fs::create_dir_all(&cfg.output_dir)
@@ -114,17 +124,31 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         run_size: cfg.run_size,
         tmpdir: workdir.tmp(),
         max_blocks: cfg.max_blocks,
+        poi_ways: reopen.is_some(),
     };
-    let (runs, stats) = pbf::sorted_runs(input, &opts)?;
+    let (mut runs, stats) = pbf::sorted_runs(input, &opts)?;
     eprintln!(
-        "read {} nodes ({} tagged, {} outside Web Mercator) into {} + {} runs in {:.0?}",
+        "read {} nodes ({} tagged, {} outside Web Mercator) and {} POI ways in {:.0?}",
         stats.nodes,
         stats.tagged,
         stats.skipped,
-        runs.all.len(),
-        runs.tagged.len(),
+        stats.poi_ways,
         start.elapsed()
     );
+    let mut way_points = 0;
+    if let Some(reopen) = reopen
+        && !runs.way_nodes.is_empty()
+    {
+        let way_nodes = std::mem::take(&mut runs.way_nodes);
+        let (way_runs, found) = pbf::way_points(reopen()?, &opts, way_nodes)?;
+        runs.tagged.extend(way_runs);
+        way_points = found;
+        eprintln!(
+            "found {found} of {} POI ways in Web Mercator in {:.0?}",
+            stats.poi_ways,
+            start.elapsed()
+        );
+    }
     if let Some(dir) = &cfg.sample_dir {
         std::fs::create_dir_all(dir)?;
     }
@@ -132,7 +156,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
     let tagged = build(
         &TAGGED,
         runs.tagged,
-        stats.tagged,
+        stats.tagged + way_points,
         &stats,
         &workdir,
         cfg,
@@ -159,6 +183,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         pixels: all.pixels,
         tiles_per_zoom: all.tiles_per_zoom,
         bytes_per_zoom: all.bytes_per_zoom,
+        poi_ways: stats.poi_ways,
         tagged,
     })
 }

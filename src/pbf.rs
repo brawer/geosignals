@@ -7,6 +7,12 @@
 //! node into its Hilbert key, and collect the keys into sorted runs on disk.
 //! Keys of nodes with tags go into a second set of runs as well; see
 //! [`counts_as_tag`] for the tags that count.
+//!
+//! Ways that describe a point of interest ([`is_poi`]) count as one
+//! tagged node, at their first node. Since the planet stores nodes before
+//! ways, this takes a second pass: [`sorted_runs`] collects the first
+//! node IDs of such ways, and [`way_points`] reads the nodes again to
+//! look up where they are.
 
 use crate::extsort::{self, Run};
 use crate::tile;
@@ -25,6 +31,8 @@ pub struct Stats {
     pub tagged: u64,
     /// Nodes outside the Web Mercator latitude range, which we skip.
     pub skipped: u64,
+    /// Ways with a point-of-interest tag; see [`is_poi`].
+    pub poi_ways: u64,
     /// When the data was current, in seconds since the Unix epoch,
     /// from the `osmosis_replication_timestamp` of the PBF header.
     pub timestamp: i64,
@@ -37,6 +45,8 @@ pub struct Options<'a> {
     pub tmpdir: &'a Path,
     /// Stop after this many data blocks, for smoke tests.
     pub max_blocks: Option<usize>,
+    /// Also read the ways, to collect the first nodes of [`is_poi`] ways.
+    pub poi_ways: bool,
 }
 
 /// Sorted runs of node keys.
@@ -46,6 +56,28 @@ pub struct Runs {
     pub all: Vec<Run>,
     /// Keys of the nodes with tags; see [`Stats::tagged`].
     pub tagged: Vec<Run>,
+    /// IDs of the first nodes of [`is_poi`] ways, for [`way_points`].
+    pub way_nodes: Vec<Run>,
+}
+
+/// Keys of tags that make a way a point of interest: something people
+/// look for, rather than a building, road or patch of land.
+const POI_KEYS: &[&str] = &[
+    "amenity",
+    "shop",
+    "tourism",
+    "leisure",
+    "office",
+    "craft",
+    "healthcare",
+    "historic",
+    "man_made",
+    "public_transport",
+];
+
+/// Whether a way with these tags counts as a point of interest.
+pub fn is_poi<'a>(mut tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool {
+    tags.any(|(k, _)| POI_KEYS.contains(&k))
 }
 
 /// Whether a tag key is about the edit rather than the feature, so that
@@ -77,9 +109,11 @@ fn has_tags<'a>(mut tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool {
 ///
 /// If the file declares itself sorted by type, reading stops at the first
 /// block with ways or relations, so most of the planet need not be decoded.
+/// With [`Options::poi_ways`], it stops at the first block of relations.
 pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Runs, Stats)> {
     let nodes = AtomicU64::new(0);
     let tagged = AtomicU64::new(0);
+    let poi_ways = AtomicU64::new(0);
     let skipped = AtomicU64::new(0);
     let done = AtomicBool::new(false);
     let (tx, rx) = crossbeam_channel::bounded::<osmpbf::Blob>(opts.threads * 4);
@@ -90,10 +124,12 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Runs, St
         for _ in 0..opts.threads.max(1) {
             let rx = rx.clone();
             let (nodes, tagged, skipped, done) = (&nodes, &tagged, &skipped, &done);
+            let poi_ways = &poi_ways;
             workers.push(s.spawn(move || -> Result<Runs> {
                 let mut runs = Runs::default();
                 let mut keys: Vec<u64> = Vec::with_capacity(opts.run_size);
                 let mut tagged_keys: Vec<u64> = Vec::new();
+                let mut way_nodes: Vec<u64> = Vec::new();
                 for blob in rx {
                     let BlobDecode::OsmData(block) = blob.decode()? else {
                         continue;
@@ -119,7 +155,18 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Runs, St
                         for node in group.nodes() {
                             push(node.lon(), node.lat(), has_tags(node.tags()));
                         }
-                        if group.ways().len() > 0 || group.relations().len() > 0 {
+                        if opts.poi_ways {
+                            for way in group.ways() {
+                                if is_poi(way.tags())
+                                    && let Some(id) = way.refs().next()
+                                {
+                                    way_nodes.push(id as u64);
+                                }
+                            }
+                        }
+                        let past_nodes = group.relations().len() > 0
+                            || (group.ways().len() > 0 && !opts.poi_ways);
+                        if past_nodes {
                             done.store(true, Ordering::Relaxed);
                         }
                     }
@@ -130,6 +177,12 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Runs, St
                         runs.all.push(extsort::write_run(&mut keys, opts.tmpdir)?);
                         keys.clear();
                     }
+                    if way_nodes.len() >= opts.run_size {
+                        poi_ways.fetch_add(way_nodes.len() as u64, Ordering::Relaxed);
+                        runs.way_nodes
+                            .push(extsort::write_run(&mut way_nodes, opts.tmpdir)?);
+                        way_nodes.clear();
+                    }
                     if tagged_keys.len() >= opts.run_size {
                         runs.tagged
                             .push(extsort::write_run(&mut tagged_keys, opts.tmpdir)?);
@@ -138,6 +191,11 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Runs, St
                 }
                 if !keys.is_empty() {
                     runs.all.push(extsort::write_run(&mut keys, opts.tmpdir)?);
+                }
+                if !way_nodes.is_empty() {
+                    poi_ways.fetch_add(way_nodes.len() as u64, Ordering::Relaxed);
+                    runs.way_nodes
+                        .push(extsort::write_run(&mut way_nodes, opts.tmpdir)?);
                 }
                 if !tagged_keys.is_empty() {
                     runs.tagged
@@ -201,6 +259,7 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Runs, St
             let r = w.join().expect("worker panicked")?;
             runs.all.extend(r.all);
             runs.tagged.extend(r.tagged);
+            runs.way_nodes.extend(r.way_nodes);
         }
         read_result?;
         Ok(timestamp.expect("checked when reading the header"))
@@ -209,10 +268,145 @@ pub fn sorted_runs<R: Read + Send>(input: R, opts: &Options) -> Result<(Runs, St
     let stats = Stats {
         nodes: nodes.into_inner(),
         tagged: tagged.into_inner(),
+        poi_ways: poi_ways.into_inner(),
         skipped: skipped.into_inner(),
         timestamp,
     };
     Ok((runs, stats))
+}
+
+/// Reads the nodes of `input` again and returns sorted runs with the key
+/// of every node in `way_nodes`, as often as it occurs there, and how
+/// many of them were found inside the Web Mercator range.
+///
+/// Blocks are decoded in parallel but joined in file order, which must
+/// be by node ID, against the sorted IDs in `way_nodes`. So memory stays
+/// bounded however many ways there are.
+pub fn way_points<R: Read + Send>(
+    input: R,
+    opts: &Options,
+    way_nodes: Vec<Run>,
+) -> Result<(Vec<Run>, u64)> {
+    if way_nodes.is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+    type Decoded = (u64, Result<Vec<(u64, Option<u64>)>>);
+    let done = AtomicBool::new(false);
+    let (tx, rx) = crossbeam_channel::bounded::<(u64, osmpbf::Blob)>(opts.threads * 4);
+    let (res_tx, res_rx) = crossbeam_channel::bounded::<Decoded>(opts.threads * 4);
+    let mut wanted = extsort::merge(way_nodes)?.peekable();
+    let mut runs = Vec::new();
+    let mut keys: Vec<u64> = Vec::new();
+    let mut found = 0u64;
+
+    std::thread::scope(|s| -> Result<()> {
+        for _ in 0..opts.threads.max(1) {
+            let (rx, res_tx, done) = (rx.clone(), res_tx.clone(), &done);
+            s.spawn(move || {
+                for (seq, blob) in rx {
+                    let decoded = (|| {
+                        let mut out = Vec::new();
+                        let BlobDecode::OsmData(block) = blob.decode()? else {
+                            return Ok(out);
+                        };
+                        for group in block.groups() {
+                            for n in group.dense_nodes() {
+                                out.push((n.id() as u64, tile::node_key(n.lon(), n.lat())));
+                            }
+                            for n in group.nodes() {
+                                out.push((n.id() as u64, tile::node_key(n.lon(), n.lat())));
+                            }
+                            if group.ways().len() > 0 || group.relations().len() > 0 {
+                                done.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        Ok(out)
+                    })();
+                    if res_tx.send((seq, decoded)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop((rx, res_tx));
+        let done = &done;
+        let reader = s.spawn(move || -> Result<()> {
+            let mut seq = 0;
+            for blob in BlobReader::new(input) {
+                let blob = blob.context("reading PBF blob")?;
+                if blob.get_type() != osmpbf::BlobType::OsmData {
+                    continue;
+                }
+                if done.load(Ordering::Relaxed) {
+                    break;
+                }
+                if tx.send((seq, blob)).is_err() {
+                    break; // The join failed; its error is reported below.
+                }
+                seq += 1;
+            }
+            Ok(())
+        });
+
+        let joined = (|| -> Result<()> {
+            let mut pending = std::collections::BTreeMap::new();
+            let (mut next, mut last_id) = (0u64, 0u64);
+            for (seq, decoded) in res_rx.iter() {
+                pending.insert(seq, decoded);
+                while let Some(decoded) = pending.remove(&next) {
+                    next += 1;
+                    for (id, key) in decoded? {
+                        if id <= last_id && last_id != 0 {
+                            bail!("nodes are not sorted by ID: {id} after {last_id}");
+                        }
+                        last_id = id;
+                        // Skip ways whose first node is missing.
+                        loop {
+                            match wanted.peek() {
+                                Some(Ok((w, _))) if *w < id => {
+                                    wanted.next();
+                                }
+                                Some(Err(_)) => {
+                                    wanted.next().expect("peeked")?;
+                                }
+                                _ => break,
+                            }
+                        }
+                        let count = match wanted.peek() {
+                            Some(Ok((w, c))) if *w == id => {
+                                let c = *c;
+                                wanted.next();
+                                c
+                            }
+                            None => {
+                                // Every way found; no need to read further.
+                                done.store(true, Ordering::Relaxed);
+                                continue;
+                            }
+                            _ => continue,
+                        };
+                        if let Some(k) = key {
+                            found += count;
+                            keys.extend(std::iter::repeat_n(k, count as usize));
+                            if keys.len() >= opts.run_size {
+                                runs.push(extsort::write_run(&mut keys, opts.tmpdir)?);
+                                keys.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })();
+        drop(res_rx);
+        let read = reader.join().expect("reader panicked");
+        joined?;
+        read
+    })?;
+    if !keys.is_empty() {
+        runs.push(extsort::write_run(&mut keys, opts.tmpdir)?);
+    }
+    Ok((runs, found))
 }
 
 #[cfg(test)]
@@ -243,6 +437,16 @@ mod tests {
         for k in ["amenity", "name", "addr:street", "natural", "notes_count"] {
             assert!(!is_meta_key(k), "{k}");
         }
+    }
+
+    #[test]
+    fn poi_ways() {
+        assert!(is_poi(
+            [("building", "yes"), ("shop", "bakery")].into_iter()
+        ));
+        assert!(is_poi([("leisure", "park")].into_iter()));
+        assert!(!is_poi([("building", "yes"), ("name", "X")].into_iter()));
+        assert!(!is_poi([("highway", "residential")].into_iter()));
     }
 
     #[test]
