@@ -7,8 +7,8 @@
 
 mod common;
 
-use osmsignals::observers::{self, EBIRD, INATURALIST};
-use osmsignals::{encode, tile};
+use geosignals::observers::{self, EBIRD, INATURALIST};
+use geosignals::{encode, tile};
 use parquet::data_type::{ByteArray, ByteArrayType, DoubleType};
 use parquet::file::properties::WriterProperties;
 use parquet::file::writer::SerializedFileWriter;

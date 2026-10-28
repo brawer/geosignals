@@ -7,8 +7,8 @@
 
 mod common;
 
-use osmsignals::tile;
-use osmsignals::transit::{self, Licenses};
+use geosignals::tile;
+use geosignals::transit::{self, Licenses};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -223,7 +223,7 @@ fn config(dir: &Path, base: &str) -> transit::Config {
         output_dir: dir.join("out"),
         workdir: dir.join("work"),
         threads: 3,
-        date: osmsignals::date::days_from_civil(2026, 6, 15) * 86_400 + 3600,
+        date: geosignals::date::days_from_civil(2026, 6, 15) * 86_400 + 3600,
         licenses: Licenses::Open,
         offline: false,
         only: Vec::new(),
@@ -242,7 +242,7 @@ fn value_at(img: &common::Image, (lon, lat): (f64, f64)) -> u16 {
 
 fn expected((lon, lat): (f64, f64), per_week: f64) -> u16 {
     let y = tile::pixel_xy(lon, lat).unwrap().1;
-    osmsignals::encode::quantize(per_week / 7.0 / tile::pixel_area_km2(18, y))
+    geosignals::encode::quantize(per_week / 7.0 / tile::pixel_area_km2(18, y))
 }
 
 fn statuses(report: &Value) -> Vec<(String, String)> {

@@ -7,7 +7,7 @@
 #   scripts/sbom.sh IMAGE_ARCHIVE IMAGE_NAME IMAGE_DIGEST OUTPUT
 #
 #   IMAGE_ARCHIVE  the image as OCI archive (podman save --format oci-archive)
-#   IMAGE_NAME     its registry name, such as ghcr.io/brawer/osmsignals
+#   IMAGE_NAME     its registry name, such as ghcr.io/brawer/geosignals
 #   IMAGE_DIGEST   its manifest digest in the registry, sha256:...
 #   OUTPUT         where to write the SBOM
 #
@@ -82,19 +82,19 @@ jq \
       type: "library",
       name: "musl",
       version: $musl,
-      description: "C standard library, statically linked into /osmsignals",
+      description: "C standard library, statically linked into /geosignals",
       licenses: [{expression: "MIT"}],
       purl: $musl_purl
     }]
   | .dependencies |= map(
-      if (.ref | startswith("pkg:cargo/osmsignals@"))
+      if (.ref | startswith("pkg:cargo/geosignals@"))
       then .dependsOn += [$musl_purl] else . end)
   ' "$WORK/syft.json" > "$WORK/sbom.json"
 
 # Fail rather than publish an SBOM with holes in it.
 jq -e '
   .specVersion == "1.7"
-  and ([.components[] | select(.purl // "" | startswith("pkg:cargo/osmsignals@"))] | length == 1)
+  and ([.components[] | select(.purl // "" | startswith("pkg:cargo/geosignals@"))] | length == 1)
   and ([.components[] | select(.purl // "" | startswith("pkg:cargo/")) | select(.licenses == null)]
        | length == 0)
   and ([.dependencies[] | select(.dependsOn | index($m))] | length == 1)

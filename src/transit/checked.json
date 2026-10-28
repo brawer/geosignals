@@ -1,5 +1,5 @@
 {
-  "comment": "Feeds and licenses that osmsignals checked itself. An entry with a url adds a feed that Transitous does not list. Every entry sets the license of the feed with its id, replacing what the catalogs say. Keep 'source' pointing to where the license is stated, and 'checked' to the day someone read it.",
+  "comment": "Feeds and licenses that geosignals checked itself. An entry with a url adds a feed that Transitous does not list. Every entry sets the license of the feed with its id, replacing what the catalogs say. Keep 'source' pointing to where the license is stated, and 'checked' to the day someone read it.",
   "feeds": [
     {
       "id": "gb/bods",

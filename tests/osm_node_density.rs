@@ -5,7 +5,7 @@
 
 mod common;
 
-use osmsignals::{encode, osm_node_density, tile};
+use geosignals::{encode, osm_node_density, tile};
 use std::path::Path;
 
 /// Output of a run: its summary, the decoded image, the data BOM, and
@@ -30,7 +30,7 @@ fn sha256(data: &[u8]) -> String {
 fn run(pbf: &Path, run_size: usize) -> Output {
     let dir = tempfile::tempdir().unwrap();
     let cfg = osm_node_density::Config {
-        input: osmsignals::bom::Input::new("zugerland.osm.pbf"),
+        input: geosignals::bom::Input::new("zugerland.osm.pbf"),
         run_id: "test-run".into(),
         output_dir: dir.path().to_path_buf(),
         workdir: dir.path().to_path_buf(),
@@ -294,7 +294,7 @@ fn restart_after_crash() {
     std::fs::write(work.join("planet.osm.pbf"), b"not ours").unwrap();
 
     let cfg = osm_node_density::Config {
-        input: osmsignals::bom::Input::new("zugerland.osm.pbf"),
+        input: geosignals::bom::Input::new("zugerland.osm.pbf"),
         run_id: "test-run".into(),
         output_dir: dir.path().to_path_buf(),
         workdir: work.clone(),
@@ -322,12 +322,12 @@ fn restart_after_crash() {
     );
 }
 
-/// Runs on a bigger extract given by `OSMSIGNALS_SMOKE_PBF`, such as
+/// Runs on a bigger extract given by `GEOSIGNALS_SMOKE_PBF`, such as
 /// Liechtenstein from Geofabrik. CI sets this up; locally it is skipped.
 #[test]
 fn smoke_test() {
-    let Ok(path) = std::env::var("OSMSIGNALS_SMOKE_PBF") else {
-        eprintln!("OSMSIGNALS_SMOKE_PBF not set, skipping");
+    let Ok(path) = std::env::var("GEOSIGNALS_SMOKE_PBF") else {
+        eprintln!("GEOSIGNALS_SMOKE_PBF not set, skipping");
         return;
     };
     let Output { summary, image, .. } = run(Path::new(&path), 1 << 20);
@@ -357,7 +357,7 @@ fn smoke_test() {
 fn ways_need_a_second_pass() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = osm_node_density::Config {
-        input: osmsignals::bom::Input::new("-"),
+        input: geosignals::bom::Input::new("-"),
         run_id: String::new(),
         output_dir: dir.path().to_path_buf(),
         workdir: dir.path().to_path_buf(),

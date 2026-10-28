@@ -3,10 +3,10 @@ SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
 SPDX-License-Identifier: MIT
 -->
 
-# OSM Signals
+# Geo Signals
 
-[![Tests](https://github.com/brawer/osmsignals/actions/workflows/test.yml/badge.svg)](https://github.com/brawer/osmsignals/actions/workflows/test.yml)
-[![REUSE status](https://api.reuse.software/badge/github.com/brawer/osmsignals)](https://api.reuse.software/info/github.com/brawer/osmsignals)
+[![Tests](https://github.com/brawer/geosignals/actions/workflows/test.yml/badge.svg)](https://github.com/brawer/geosignals/actions/workflows/test.yml)
+[![REUSE status](https://api.reuse.software/badge/github.com/brawer/geosignals)](https://api.reuse.software/info/github.com/brawer/geosignals)
 
 Ranking signals for [OpenStreetMap](https://www.openstreetmap.org/),
 computed from the planet file and published as
@@ -63,7 +63,7 @@ from standard input can't be read twice, so ways don't count there.
 
 Next to it, `osm-node-density.2026-10-12.cdx.json` is a data bill of
 materials in [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/)
-format. It records the osmsignals version, the planet it read (by name,
+format. It records the geosignals version, the planet it read (by name,
 replication timestamp and download URL, but without a hash since the
 planet is only partly read), and the SHA-256 and SHA-512 of the GeoTIFF.
 The same planet and release give the same file, except for the
@@ -83,21 +83,21 @@ just a statically linked binary. With rootless podman, map your own
 user into the container so the output belongs to you:
 
 ```sh
-podman build -t osmsignals .
+podman build -t geosignals .
 podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$PWD:/data" \
-  osmsignals osm-node-density --output-dir .
+  geosignals osm-node-density --output-dir .
 ```
 
-Each release is also published as `ghcr.io/brawer/osmsignals` for
+Each release is also published as `ghcr.io/brawer/geosignals` for
 amd64 and arm64, with SLSA Build Level 3 provenance and a CycloneDX 1.7
 SBOM per architecture attached as attestations. The single-architecture
 images are tagged too, such as `v0.1.0-amd64`. To check that an image
 was built by this repository's release workflow, and to read its SBOM:
 
 ```sh
-gh attestation verify oci://ghcr.io/brawer/osmsignals:v0.1.0 --owner brawer \
-  --signer-workflow brawer/osmsignals/.github/workflows/release-build.yml
-gh attestation verify oci://ghcr.io/brawer/osmsignals:v0.1.0-amd64 --owner brawer \
+gh attestation verify oci://ghcr.io/brawer/geosignals:v0.1.0 --owner brawer \
+  --signer-workflow brawer/geosignals/.github/workflows/release-build.yml
+gh attestation verify oci://ghcr.io/brawer/geosignals:v0.1.0-amd64 --owner brawer \
   --predicate-type https://cyclonedx.org/bom --format json \
   | jq '.[0].verificationResult.statement.predicate'
 ```
@@ -243,7 +243,7 @@ biases and its license.
 
 ```sh
 cargo run --release -- transit-departures \
-  --cache s3://my-bucket/osmsignals --output-dir transit
+  --cache s3://my-bucket/geosignals --output-dir transit
 ```
 
 This counts how often public transport departs, per day and km² of
@@ -433,7 +433,7 @@ feeds served over HTTP, through the cache while the server is up,
 unchanged and down, and on small Parquet files laid out like GBIF's,
 served from a fake S3 bucket. A smoke test on Liechtenstein from Geofabrik runs for
 release tags and on demand (see `.github/workflows/smoke-test.yml`);
-locally, point `OSMSIGNALS_SMOKE_PBF` at any extract to run it. It also
+locally, point `GEOSIGNALS_SMOKE_PBF` at any extract to run it. It also
 republishes the real Nominatim raster and checks the result with GDAL.
 
 ## Contributing

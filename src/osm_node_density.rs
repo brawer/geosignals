@@ -17,7 +17,7 @@ use std::time::Instant;
 const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
     name: "osm-node-density",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#osm-node-density").
-    // Frozen: catalogs key on it.
+    // Frozen: catalogs key on it, so it keeps the repo's old name.
     id: "2c7bffea-cc30-533e-ac1d-dc7b4aefd158",
     title: "OpenStreetMap node density",
     description: "How many OpenStreetMap nodes there are per km² of Earth surface, \
@@ -302,7 +302,7 @@ fn build(
     let bytes_per_zoom = spool.bytes_per_zoom.clone();
     let meta = Metadata {
         description: layer.title.into(),
-        software: format!("osmsignals {}", env!("CARGO_PKG_VERSION")),
+        software: format!("geosignals {}", env!("CARGO_PKG_VERSION")),
         copyright: "© OpenStreetMap contributors, ODbL 1.0".into(),
         min_value: hist.range().0,
         max_value: hist.range().1,

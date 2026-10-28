@@ -6,7 +6,7 @@
 
 mod common;
 
-use osmsignals::nominatim;
+use geosignals::nominatim;
 use std::io::Write;
 
 /// A PostGIS raster tile in hex WKB, `w`×`h` cells with its top left at
@@ -65,7 +65,7 @@ fn republishes_raster() {
 
     let dir = tempfile::tempdir().unwrap();
     let cfg = nominatim::Config {
-        input: osmsignals::bom::Input::new(nominatim::URL).from(&osmsignals::bom::NOMINATIM),
+        input: geosignals::bom::Input::new(nominatim::URL).from(&geosignals::bom::NOMINATIM),
         timestamp: 1_714_812_134, // Sat, 04 May 2024 08:42:14 GMT
         run_id: "test-run".into(),
         output_dir: dir.path().join("out"),

@@ -36,7 +36,7 @@ use std::time::Instant;
 const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
     name: "transit-departures",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#transit-departures").
-    // Frozen: catalogs key on it.
+    // Frozen: catalogs key on it, so it keeps the repo's old name.
     id: "48622a5a-879b-5594-ad49-8776f47d43c4",
     title: "Public transport departures",
     description: "How many public transport departures there are per day and km² \
@@ -297,7 +297,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     );
     let meta = Metadata {
         description: "Public transport departures".into(),
-        software: format!("osmsignals {}", env!("CARGO_PKG_VERSION")),
+        software: format!("geosignals {}", env!("CARGO_PKG_VERSION")),
         copyright: copyright.clone(),
         min_value: hist.range().0,
         max_value: hist.range().1,

@@ -20,7 +20,7 @@ enum Command {
         /// OSM PBF to read: a file, an http(s) URL, or "-" for standard
         /// input. Defaults to the most recent weekly planet dump, which
         /// is streamed over HTTPS without storing it.
-        #[arg(long, default_value = osmsignals::http::PLANET_URL)]
+        #[arg(long, default_value = geosignals::http::PLANET_URL)]
         input: String,
         /// Directory for the GeoTIFF, which gets named after the date of
         /// the input data, such as osm-node-density.2026-10-19.tiff.
@@ -57,7 +57,7 @@ enum Command {
     NominatimSecondaryImportance {
         /// The gzipped SQL dump to read: a file or an http(s) URL.
         /// Defaults to the one published by nominatim.org.
-        #[arg(long, default_value = osmsignals::nominatim::URL)]
+        #[arg(long, default_value = geosignals::nominatim::URL)]
         input: String,
         /// Directory for the GeoTIFF, which gets named after the date the
         /// input was last modified, such as
@@ -86,7 +86,7 @@ enum Command {
         #[arg(long)]
         snapshot: Option<String>,
         /// The bucket holding GBIF's snapshots, or one of its mirrors.
-        #[arg(long, default_value = osmsignals::observers::snapshot::BUCKET_URL)]
+        #[arg(long, default_value = geosignals::observers::snapshot::BUCKET_URL)]
         bucket: String,
         /// Directory for the GeoTIFFs, which get named after the snapshot
         /// and their license, such as
@@ -120,16 +120,16 @@ enum Command {
         /// The Transitous feed catalog: the URL of a tarball of the
         /// repository, a local tarball, or a checkout. Downloads are cached
         /// like feeds, so a run still works when GitHub is down.
-        #[arg(long, default_value = osmsignals::transit::TRANSITOUS_URL)]
+        #[arg(long, default_value = geosignals::transit::TRANSITOUS_URL)]
         transitous: String,
         /// The Transitland Atlas, for feeds that Transitous takes from
         /// there: a URL, a local tarball, or a checkout. "none" skips
         /// those feeds.
-        #[arg(long, default_value = osmsignals::transit::TRANSITLAND_ATLAS_URL)]
+        #[arg(long, default_value = geosignals::transit::TRANSITLAND_ATLAS_URL)]
         transitland_atlas: String,
         /// The Mobility Database export, as a file or URL, for feeds that
         /// Transitous takes from there. "none" skips those feeds.
-        #[arg(long, default_value = osmsignals::transit::MOBILITY_DATABASE_CSV)]
+        #[arg(long, default_value = geosignals::transit::MOBILITY_DATABASE_CSV)]
         mobility_database: String,
         /// Where to keep downloaded and condensed feeds between runs: a
         /// directory, or s3://bucket/prefix with credentials in AWS_ACCESS_KEY_ID,
@@ -153,8 +153,8 @@ enum Command {
         #[arg(long)]
         date: Option<String>,
         /// Which feeds to use, by license.
-        #[arg(long, value_enum, default_value_t = osmsignals::transit::Licenses::Open)]
-        licenses: osmsignals::transit::Licenses,
+        #[arg(long, value_enum, default_value_t = geosignals::transit::Licenses::Open)]
+        licenses: geosignals::transit::Licenses,
         /// Use only cached feeds, without contacting any publisher.
         #[arg(long)]
         offline: bool,
@@ -211,8 +211,8 @@ fn main() -> Result<()> {
         } => {
             let threads = default_threads(threads);
             let (reader, source) = open(&input)?;
-            let cfg = osmsignals::osm_node_density::Config {
-                input: osmsignals::bom::Input::new(&source),
+            let cfg = geosignals::osm_node_density::Config {
+                input: geosignals::bom::Input::new(&source),
                 run_id,
                 output_dir,
                 workdir,
@@ -232,8 +232,8 @@ fn main() -> Result<()> {
             if source == "-" {
                 eprintln!("standard input can't be read twice, so ways won't count");
             }
-            let reopen = (source != "-").then_some(&reopen as osmsignals::osm_node_density::Reopen);
-            let summary = osmsignals::osm_node_density::run(input, reopen, &cfg)?;
+            let reopen = (source != "-").then_some(&reopen as geosignals::osm_node_density::Reopen);
+            let summary = geosignals::osm_node_density::run(input, reopen, &cfg)?;
             eprintln!("{summary:#?}");
         }
         Command::NominatimSecondaryImportance {
@@ -244,15 +244,15 @@ fn main() -> Result<()> {
             run_id,
         } => {
             let (reader, source, timestamp) = open_dated(&input)?;
-            let cfg = osmsignals::nominatim::Config {
-                input: osmsignals::bom::Input::new(&source).from(&osmsignals::bom::NOMINATIM),
+            let cfg = geosignals::nominatim::Config {
+                input: geosignals::bom::Input::new(&source).from(&geosignals::bom::NOMINATIM),
                 timestamp,
                 run_id,
                 output_dir,
                 workdir,
                 threads: default_threads(threads),
             };
-            let summary = osmsignals::nominatim::run(reader, &cfg)?;
+            let summary = geosignals::nominatim::run(reader, &cfg)?;
             eprintln!("{summary:#?}");
         }
         Command::NaturalistObservers {
@@ -265,7 +265,7 @@ fn main() -> Result<()> {
             files,
             run_id,
         } => {
-            let cfg = osmsignals::observers::Config {
+            let cfg = geosignals::observers::Config {
                 bucket,
                 snapshot,
                 output_dir,
@@ -276,7 +276,7 @@ fn main() -> Result<()> {
                 run_id,
             };
             limit_malloc_arenas();
-            let summary = osmsignals::observers::run(&cfg)?;
+            let summary = geosignals::observers::run(&cfg)?;
             eprintln!("{summary:#?}");
         }
         Command::TransitDepartures {
@@ -300,7 +300,7 @@ fn main() -> Result<()> {
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_secs() as i64,
             };
-            let cfg = osmsignals::transit::Config {
+            let cfg = geosignals::transit::Config {
                 transitous,
                 transitland_atlas: Some(transitland_atlas).filter(|a| a != "none"),
                 mobility_database: Some(mobility_database).filter(|m| m != "none"),
@@ -316,7 +316,7 @@ fn main() -> Result<()> {
                 run_id,
                 retry_delay: std::time::Duration::from_secs(2),
             };
-            let summary = osmsignals::transit::run(&cfg)?;
+            let summary = geosignals::transit::run(&cfg)?;
             eprintln!("{summary:#?}");
         }
     }
@@ -345,7 +345,7 @@ fn parse_date(s: &str) -> Result<i64> {
         parts.get(2).and_then(|p| n(p)),
     ) {
         (true, Some(y), Some(m), Some(d)) if (1..=12).contains(&m) && (1..=31).contains(&d) => {
-            Ok(osmsignals::date::days_from_civil(i64::from(y), m, d) * 86_400)
+            Ok(geosignals::date::days_from_civil(i64::from(y), m, d) * 86_400)
         }
         _ => anyhow::bail!("bad date {s:?}, expected YYYY-MM-DD"),
     }
@@ -354,9 +354,9 @@ fn parse_date(s: &str) -> Result<i64> {
 /// Like [`open`], but also returns when the input was last modified:
 /// for a URL, its Last-Modified header; for a file, its mtime.
 fn open_dated(input: &str) -> Result<(Box<dyn Read + Send>, String, i64)> {
-    use osmsignals::date;
+    use geosignals::date;
     if input.starts_with("https://") || input.starts_with("http://") {
-        let reader = osmsignals::http::HttpReader::open(osmsignals::http::agent(), input)?;
+        let reader = geosignals::http::HttpReader::open(geosignals::http::agent(), input)?;
         eprintln!("reading {}", reader.url());
         let modified = reader
             .last_modified()
@@ -381,7 +381,7 @@ fn open(input: &str) -> Result<(Box<dyn Read + Send>, String)> {
         return Ok((Box::new(std::io::stdin()), input.into()));
     }
     if input.starts_with("https://") || input.starts_with("http://") {
-        let reader = osmsignals::http::HttpReader::open(osmsignals::http::agent(), input)?;
+        let reader = geosignals::http::HttpReader::open(geosignals::http::agent(), input)?;
         eprintln!("reading {}", reader.url());
         let url = reader.url().to_string();
         return Ok((Box::new(reader), url));

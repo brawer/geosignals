@@ -31,14 +31,14 @@ materials (`.cdx.json`) for each, and one `datapackage.json`:
 | File | What it holds |
 | --- | --- |
 | `osm-node-density.2026-10-19.tiff` | The raster, 2.8 GB |
-| `osm-node-density.2026-10-19.cdx.json` | The osmsignals release that made the raster, the planet it read, and the raster's SHA-256 and SHA-512 |
+| `osm-node-density.2026-10-19.cdx.json` | The geosignals release that made the raster, the planet it read, and the raster's SHA-256 and SHA-512 |
 | `osm-tagged-node-density.2026-10-19.tiff` | The tagged layer, 332 MB |
 | `osm-tagged-node-density.2026-10-19.cdx.json` | The same for the tagged layer |
 | `datapackage.json` | All of the above as a Frictionless data package, with the license |
 
 The date in each name is the date of the planet's data, taken from the
 replication timestamp in its header. A dated file never changes; the
-next release gets new files. The same planet and osmsignals release
+next release gets new files. The same planet and geosignals release
 always give the same rasters, byte for byte.
 
 ## The source
@@ -80,7 +80,7 @@ up to about ±85.05° latitude.
 - **Values.** A pixel stores nodes per km² of real Earth surface,
   measured on the sphere, so pixels can be compared across latitudes.
   The values are unsigned 16-bit integers on a log scale, with the
-  same encoding as the other osmsignals rasters:
+  same encoding as the other geosignals rasters:
 
 ```
 v = 0                                   no nodes
