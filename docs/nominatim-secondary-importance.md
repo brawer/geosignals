@@ -371,5 +371,8 @@ cargo run --release -- nominatim-secondary-importance --output-dir nominatim
 ```
 
 This downloads the 7.7 MB file from nominatim.org and takes about 20
-seconds. `--input` reads a local copy instead. See the
-[README](../README.md#nominatim-secondary-importance) for the options.
+seconds. `--input` reads a local copy instead; the output is then
+named after the file's modification time. Since the input is read
+whole, the data BOM also records its SHA-256 and SHA-512. See
+[Running geosignals](running.md) for the container, the data BOM,
+`datapackage.json` and scratch space.

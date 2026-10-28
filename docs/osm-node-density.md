@@ -272,8 +272,18 @@ page is not legal advice.
 cargo run --release -- osm-node-density --output-dir .
 ```
 
-`--input` reads a local file, another URL, or standard input instead
-of the latest planet. `--smoke-test` reads only the first few blocks.
-See the [README](../README.md#usage) for the other options. Standard
-input can't be read twice, so with `--input -` the tagged layer
-counts only nodes, not ways.
+By default, this streams the most recent weekly planet dump from
+`planet.openstreetmap.org` over HTTPS, without storing it. If the
+connection drops, reading resumes with a range request. `--input`
+also takes a local file, another URL, or `-` for standard input.
+Standard input can't be read twice, so with `--input -` the tagged
+layer counts only nodes, not ways. Input without a replication
+timestamp in its PBF header is rejected, since the output is named
+after it. `--smoke-test` reads only the first few blocks, to check
+that everything works without processing the planet.
+
+The GeoTIFFs are BigTIFF, tiled 256 × 256 and compressed with
+Zstandard. The data BOM names the planet by name, replication
+timestamp and download URL, but has no hash of it, since the planet
+is only partly read. See [Running geosignals](running.md) for the
+container, the data BOM, `datapackage.json` and scratch space.
