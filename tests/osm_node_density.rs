@@ -17,6 +17,14 @@ struct Output {
     datapackage: serde_json::Value,
     sha256: String,
     bom_bytes: usize,
+    /// The decoded image of nodes with tags, and its SHA-256.
+    tagged_image: common::Image,
+    tagged_sha256: String,
+}
+
+fn sha256(data: &[u8]) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, data);
+    digest.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn run(pbf: &Path, run_size: usize) -> Output {
@@ -36,8 +44,7 @@ fn run(pbf: &Path, run_size: usize) -> Output {
     let summary = osm_node_density::run(std::io::BufReader::new(input), &cfg).unwrap();
     let tiff = std::fs::read(&summary.output).unwrap();
     let image = common::read(&tiff);
-    let digest = ring::digest::digest(&ring::digest::SHA256, &tiff);
-    let sha256 = digest.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    let tagged_tiff = std::fs::read(&summary.tagged.tiff).unwrap();
     let bom_json = std::fs::read(&summary.bom).unwrap();
     let bom = serde_json::from_slice(&bom_json).unwrap();
     let datapackage =
@@ -47,8 +54,10 @@ fn run(pbf: &Path, run_size: usize) -> Output {
         image,
         bom,
         datapackage,
-        sha256,
+        sha256: sha256(&tiff),
         bom_bytes: bom_json.len(),
+        tagged_image: common::read(&tagged_tiff),
+        tagged_sha256: sha256(&tagged_tiff),
     }
 }
 
@@ -66,6 +75,9 @@ fn approx_nodes(z: u8, y: u32, pixels: &[u16]) -> f64 {
 
 const ZUGERLAND: &str = "tests/data/zugerland.osm.pbf";
 
+/// Nodes in the test extract with a tag other than `source` and such.
+const TAGGED_NODES: u64 = 221;
+
 #[test]
 fn zugerland() {
     let Output {
@@ -75,6 +87,7 @@ fn zugerland() {
         datapackage,
         sha256,
         bom_bytes,
+        ..
     } = run(Path::new(ZUGERLAND), 1000);
     assert_eq!(summary.nodes, 1790);
     assert_eq!(summary.skipped_nodes, 0);
@@ -188,6 +201,62 @@ fn zugerland() {
 }
 
 #[test]
+fn tagged_layer() {
+    let out = run(Path::new(ZUGERLAND), 1000);
+    let tagged = &out.summary.tagged;
+    assert_eq!(tagged.nodes, TAGGED_NODES);
+    assert_eq!(
+        tagged.tiff.file_name().unwrap(),
+        "osm-tagged-node-density.2026-01-27.tiff"
+    );
+    assert_eq!(
+        tagged.bom.file_name().unwrap(),
+        "osm-tagged-node-density.2026-01-27.cdx.json"
+    );
+    assert!(tagged.pixels > 0 && tagged.pixels < out.summary.pixels);
+
+    let gdal = out.tagged_image.ifds[0][&42112].ascii();
+    let item = format!(r#"<Item name="NODES">{TAGGED_NODES}</Item>"#);
+    assert!(gdal.contains(&item), "{gdal}");
+    assert!(gdal.contains("tagged OSM nodes"), "{gdal}");
+
+    // A pixel never has more tagged nodes than nodes.
+    for (key, px) in &out.tagged_image.tiles {
+        let all = &out.image.tiles[key];
+        assert!(px.iter().zip(all).all(|(t, a)| t <= a), "tile {key:?}");
+    }
+    let n: f64 = out
+        .tagged_image
+        .tiles
+        .iter()
+        .filter(|((z, _, _), _)| *z == 10)
+        .map(|(&(z, _, y), data)| approx_nodes(z, y, data))
+        .sum();
+    assert!((n / TAGGED_NODES as f64 - 1.0).abs() < 0.06, "{n:.0} nodes");
+
+    // One data package lists both layers, each with its BOM.
+    let resources = out.datapackage["resources"].as_array().unwrap();
+    let names: Vec<_> = resources
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "osm-node-density",
+            "osm-node-density-bom",
+            "osm-tagged-node-density",
+            "osm-tagged-node-density-bom"
+        ]
+    );
+    assert_eq!(
+        resources[2]["hash"],
+        format!("sha256:{}", out.tagged_sha256)
+    );
+    assert_eq!(out.datapackage["licenses"][0]["name"], "ODbL-1.0");
+}
+
+#[test]
 fn run_size_does_not_change_output() {
     let (a, b) = (
         run(Path::new(ZUGERLAND), 7),
@@ -195,6 +264,8 @@ fn run_size_does_not_change_output() {
     );
     assert_eq!(a.image.tiles, b.image.tiles);
     assert_eq!(a.sha256, b.sha256);
+    assert_eq!(a.tagged_image.tiles, b.tagged_image.tiles);
+    assert_eq!(a.tagged_sha256, b.tagged_sha256);
     assert_eq!(a.bom, b.bom, "data BOM is reproducible");
     assert_eq!(a.datapackage, b.datapackage, "data package is reproducible");
 }

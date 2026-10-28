@@ -21,8 +21,10 @@ const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
     id: "2c7bffea-cc30-533e-ac1d-dc7b4aefd158",
     title: "OpenStreetMap node density",
     description: "How many OpenStreetMap nodes there are per km² of Earth surface, \
-        for every zoom-18 Web Mercator tile, as a Cloud-Optimized GeoTIFF with \
-        overviews. Pixel values encode log2(nodes per km²); 0 means no nodes.",
+        for every zoom-18 Web Mercator tile, as Cloud-Optimized GeoTIFFs with \
+        overviews: one for all nodes, and one for nodes with tags other than \
+        addresses, source, note, fixme and the like. Pixel values encode log2(nodes per \
+        km²); 0 means no nodes.",
 };
 
 pub struct Config {
@@ -48,14 +50,55 @@ pub struct Config {
 
 #[derive(Debug, Default)]
 pub struct Summary {
-    /// The GeoTIFF file that was written.
+    /// The GeoTIFF of all nodes.
     pub output: PathBuf,
     /// Its data bill of materials; see [`crate::bom`].
     pub bom: PathBuf,
-    /// The data package pointing to both; see [`crate::datapackage`].
+    /// The data package pointing to both layers and their BOMs; see
+    /// [`crate::datapackage`].
     pub datapackage: PathBuf,
     pub nodes: u64,
     pub skipped_nodes: u64,
+    pub pixels: u64,
+    pub tiles_per_zoom: Vec<u64>,
+    pub bytes_per_zoom: Vec<u64>,
+    /// The layer of nodes with tags; see [`pbf::counts_as_tag`] for the
+    /// tags that count.
+    pub tagged: Output,
+}
+
+/// One of the GeoTIFFs a run writes.
+struct Layer {
+    /// File name prefix and data package resource name.
+    name: &'static str,
+    title: &'static str,
+    /// Band description, shown by GDAL and QGIS.
+    band: &'static str,
+}
+
+const ALL: Layer = Layer {
+    name: "osm-node-density",
+    title: "OpenStreetMap node density",
+    band: "log2(OSM nodes per km²)",
+};
+
+const TAGGED: Layer = Layer {
+    name: "osm-tagged-node-density",
+    title: "OpenStreetMap tagged node density",
+    band: "log2(tagged OSM nodes per km²)",
+};
+
+/// What [`run`] wrote for one layer.
+#[derive(Debug, Default)]
+pub struct Output {
+    /// The GeoTIFF file.
+    pub tiff: PathBuf,
+    /// Its data bill of materials; see [`crate::bom`].
+    pub bom: PathBuf,
+    pub hashes: crate::bom::Hashes,
+    /// Nodes that went into the layer, including those outside Web
+    /// Mercator.
+    pub nodes: u64,
     pub pixels: u64,
     pub tiles_per_zoom: Vec<u64>,
     pub bytes_per_zoom: Vec<u64>,
@@ -74,19 +117,82 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
     };
     let (runs, stats) = pbf::sorted_runs(input, &opts)?;
     eprintln!(
-        "read {} nodes ({} outside Web Mercator) into {} runs in {:.0?}",
+        "read {} nodes ({} tagged, {} outside Web Mercator) into {} + {} runs in {:.0?}",
         stats.nodes,
+        stats.tagged,
         stats.skipped,
-        runs.len(),
+        runs.all.len(),
+        runs.tagged.len(),
         start.elapsed()
     );
-
-    let mut spool = Spool::new(workdir.tmp(), Grid::WEB_MERCATOR)?;
-    let mut pixels = 0u64;
-    let mut hist = Histogram::default();
     if let Some(dir) = &cfg.sample_dir {
         std::fs::create_dir_all(dir)?;
     }
+    let all = build(&ALL, runs.all, stats.nodes, &stats, &workdir, cfg, true)?;
+    let tagged = build(
+        &TAGGED,
+        runs.tagged,
+        stats.tagged,
+        &stats,
+        &workdir,
+        cfg,
+        false,
+    )?;
+
+    // Written last, so it never points to files that are not there yet.
+    let datapackage = crate::datapackage::write_layers(
+        &PACKAGE,
+        vec![crate::datapackage::input_source(
+            &cfg.input,
+            stats.timestamp,
+        )],
+        stats.timestamp,
+        &[dp_layer(&ALL, &all), dp_layer(&TAGGED, &tagged)],
+    )?;
+    eprintln!("wrote {} in {:.0?}", datapackage.display(), start.elapsed());
+    Ok(Summary {
+        output: all.tiff,
+        bom: all.bom,
+        datapackage,
+        nodes: stats.nodes,
+        skipped_nodes: stats.skipped,
+        pixels: all.pixels,
+        tiles_per_zoom: all.tiles_per_zoom,
+        bytes_per_zoom: all.bytes_per_zoom,
+        tagged,
+    })
+}
+
+fn dp_layer<'a>(l: &'a Layer, o: &'a Output) -> crate::datapackage::Layer<'a> {
+    crate::datapackage::Layer {
+        name: l.name,
+        title: l.title,
+        tiff: &o.tiff,
+        tiff_hashes: &o.hashes,
+        bom: &o.bom,
+        license: &crate::bom::ODBL,
+    }
+}
+
+/// Builds the pyramid of one layer from its sorted runs, and writes its
+/// GeoTIFF and data BOM.
+fn build(
+    layer: &Layer,
+    runs: Vec<extsort::Run>,
+    nodes: u64,
+    stats: &pbf::Stats,
+    workdir: &Workdir,
+    cfg: &Config,
+    sample: bool,
+) -> Result<Output> {
+    let start = Instant::now();
+    // Each layer spools into its own directory, removed once its
+    // GeoTIFF is written.
+    let spool_dir = workdir.tmp().join(layer.name);
+    std::fs::create_dir_all(&spool_dir)?;
+    let mut spool = Spool::new(&spool_dir, Grid::WEB_MERCATOR)?;
+    let mut pixels = 0u64;
+    let mut hist = Histogram::default();
 
     // Tiles are encoded in parallel but spooled in the order the pyramid
     // emitted them, so each zoom level stays in Hilbert order.
@@ -127,7 +233,7 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         });
 
         let mut seq = 0u64;
-        let sample_dir = cfg.sample_dir.as_deref();
+        let sample_dir = cfg.sample_dir.as_deref().filter(|_| sample);
         let mut builder = pyramid::Builder::new(|z, x, y, counts: &pyramid::Counts| {
             if let Some(dir) = sample_dir
                 && (z <= 5 || fast_hilbert::xy2h(x, y, z) % cfg.sample_rate == 0)
@@ -154,7 +260,8 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
         collected
     })?;
     eprintln!(
-        "built pyramid from {pixels} non-empty pixels in {:.0?}",
+        "built {} from {pixels} non-empty pixels in {:.0?}",
+        layer.name,
         start.elapsed()
     );
 
@@ -163,56 +270,48 @@ pub fn run<R: Read + Send>(input: R, cfg: &Config) -> Result<Summary> {
     let empty_tiles = (1u64 << (2 * MAX_TILE_ZOOM)) - full_tiles;
     hist.add_value(0, empty_tiles * (TILE_SIZE * TILE_SIZE) as u64);
 
-    let output = cfg.output_dir.join(output_name(stats.timestamp)?);
-    let mut summary = Summary {
-        output: output.clone(),
-        nodes: stats.nodes,
-        skipped_nodes: stats.skipped,
-        pixels,
-        tiles_per_zoom: spool.tiles_per_zoom.clone(),
-        bytes_per_zoom: spool.bytes_per_zoom.clone(),
-        ..Summary::default()
-    };
+    let tiff = cfg
+        .output_dir
+        .join(crate::date::dated_name(layer.name, stats.timestamp)?);
+    let tiles_per_zoom = spool.tiles_per_zoom.clone();
+    let bytes_per_zoom = spool.bytes_per_zoom.clone();
     let meta = Metadata {
-        description: "OpenStreetMap node density".into(),
+        description: layer.title.into(),
         software: format!("osmsignals {}", env!("CARGO_PKG_VERSION")),
         copyright: "© OpenStreetMap contributors, ODbL 1.0".into(),
         min_value: hist.range().0,
         max_value: hist.range().1,
-        gdal_metadata: gdal_metadata(stats.nodes, &hist),
+        gdal_metadata: gdal_metadata(layer.band, nodes, &hist),
         nodata: None,
     };
-    spool.write_cog(&output, &meta)?;
-    let hashes = crate::bom::hash_file(&output)?;
-    summary.bom = crate::bom::write(
+    spool.write_cog(&tiff, &meta)?;
+    std::fs::remove_dir_all(&spool_dir)?;
+    let hashes = crate::bom::hash_file(&tiff)?;
+    let bom = crate::bom::write(
         &crate::bom::Run {
             input: &cfg.input,
             timestamp: stats.timestamp,
-            output: &output,
-            description: "OpenStreetMap node density",
+            output: &tiff,
+            description: layer.title,
             run_id: &cfg.run_id,
         },
         &hashes,
     )?;
-    // Written last, so it never points to files that are not there yet.
-    summary.datapackage = crate::datapackage::write(
-        &PACKAGE,
-        &crate::datapackage::Files {
-            input: &cfg.input,
-            timestamp: stats.timestamp,
-            tiff: &output,
-            tiff_hashes: &hashes,
-            bom: &summary.bom,
-        },
-    )?;
     eprintln!(
-        "wrote {}, {} and {} in {:.0?}",
-        output.display(),
-        summary.bom.display(),
-        summary.datapackage.display(),
+        "wrote {} and {} in {:.0?}",
+        tiff.display(),
+        bom.display(),
         start.elapsed()
     );
-    Ok(summary)
+    Ok(Output {
+        tiff,
+        bom,
+        hashes,
+        nodes,
+        pixels,
+        tiles_per_zoom,
+        bytes_per_zoom,
+    })
 }
 
 /// File name for data as of `timestamp` (seconds since the Unix epoch),
@@ -233,7 +332,7 @@ fn write_sample(dir: &Path, z: u8, x: u32, y: u32, counts: &pyramid::Counts) -> 
 
 /// Band description and scale for GDAL, so that tools like QGIS show
 /// log2(nodes/km²) instead of raw pixel values, plus the value histogram.
-fn gdal_metadata(nodes: u64, hist: &Histogram) -> String {
+fn gdal_metadata(band: &str, nodes: u64, hist: &Histogram) -> String {
     let scale = 1.0 / encode::STEPS_PER_OCTAVE;
     let offset = encode::LOG2_MIN_DENSITY - scale;
     format!(
@@ -241,13 +340,14 @@ fn gdal_metadata(nodes: u64, hist: &Histogram) -> String {
             "<GDALMetadata>",
             r#"<Item name="NODES">{nodes}</Item>"#,
             r#"<Item name="ENCODING">v = 0: no nodes; otherwise log2(nodes per km²) = {scale} * v - {neg_offset}</Item>"#,
-            r#"<Item name="DESCRIPTION" sample="0" role="description">log2(OSM nodes per km²)</Item>"#,
+            r#"<Item name="DESCRIPTION" sample="0" role="description">{band}</Item>"#,
             r#"<Item name="SCALE" sample="0" role="scale">{scale}</Item>"#,
             r#"<Item name="OFFSET" sample="0" role="offset">{offset}</Item>"#,
             "{rat}",
             "</GDALMetadata>"
         ),
         nodes = nodes,
+        band = band,
         scale = scale,
         offset = offset,
         neg_offset = -offset,
