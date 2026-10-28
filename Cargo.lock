@@ -410,6 +410,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "geosignals"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "approx",
+ "bytes",
+ "clap",
+ "crossbeam-channel",
+ "csv",
+ "fast_hilbert",
+ "flate2",
+ "libc",
+ "memmap2 0.9.12",
+ "osmpbf",
+ "parquet",
+ "ring",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "ureq",
+ "zip",
+ "zstd",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -690,31 +715,6 @@ dependencies = [
  "protobuf",
  "protobuf-codegen",
  "rayon",
-]
-
-[[package]]
-name = "osmsignals"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "approx",
- "bytes",
- "clap",
- "crossbeam-channel",
- "csv",
- "fast_hilbert",
- "flate2",
- "libc",
- "memmap2 0.9.12",
- "osmpbf",
- "parquet",
- "ring",
- "serde_json",
- "tar",
- "tempfile",
- "ureq",
- "zip",
- "zstd",
 ]
 
 [[package]]

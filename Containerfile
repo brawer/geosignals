@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MIT
 
 # Builds a minimal OCI image that holds nothing but a statically linked
-# osmsignals binary.
+# geosignals binary.
 #
-#   podman build -t osmsignals .
+#   podman build -t geosignals .
 #   podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" \
-#       -v "$PWD:/data" osmsignals \
+#       -v "$PWD:/data" geosignals \
 #       osm-node-density --output-dir .
 #
 # Releases are built and attested by .github/workflows/release-build.yml.
@@ -39,27 +39,27 @@ ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
     RUSTFLAGS="--remap-path-prefix=/src=. --remap-path-prefix=/usr/local/cargo=cargo"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo auditable build --release --locked --bin osmsignals \
- && cp target/release/osmsignals /osmsignals
+    cargo auditable build --release --locked --bin geosignals \
+ && cp target/release/geosignals /geosignals
 
 # Fail the build unless the binary is static (static-pie is fine:
 # it has a dynamic section, but no interpreter and no needed libraries).
-RUN ! readelf --program-headers /osmsignals | grep -q INTERP \
- && ! readelf --dynamic /osmsignals | grep -q NEEDED \
- && /osmsignals --version
+RUN ! readelf --program-headers /geosignals | grep -q INTERP \
+ && ! readelf --dynamic /geosignals | grep -q NEEDED \
+ && /geosignals --version
 
 # scratch has no filesystem at all; give it a /tmp for the sort spill
 # files (the default --workdir) and a /data directory to mount.
 RUN mkdir -p /rootfs/tmp /rootfs/data \
  && chmod 1777 /rootfs/tmp \
  && chmod 0777 /rootfs/data \
- && cp /osmsignals /rootfs/osmsignals
+ && cp /geosignals /rootfs/geosignals
 
 FROM scratch
 
-LABEL org.opencontainers.image.title="osmsignals" \
+LABEL org.opencontainers.image.title="geosignals" \
       org.opencontainers.image.description="Ranking signals for OpenStreetMap" \
-      org.opencontainers.image.source="https://github.com/brawer/osmsignals" \
+      org.opencontainers.image.source="https://github.com/brawer/geosignals" \
       org.opencontainers.image.licenses="MIT"
 
 COPY --from=build /rootfs/ /
@@ -67,5 +67,5 @@ COPY --from=build /rootfs/ /
 # Run unprivileged (nobody:nogroup).
 USER 65534:65534
 WORKDIR /data
-ENTRYPOINT ["/osmsignals"]
+ENTRYPOINT ["/geosignals"]
 CMD ["--help"]

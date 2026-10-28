@@ -14,9 +14,9 @@ name: Release build
 # this file at a pinned ref, so the build instructions are isolated from
 # the calling workflow, and verifiers can require that exact signer:
 #
-#   gh attestation verify oci://ghcr.io/brawer/osmsignals:v0.1.0 \
+#   gh attestation verify oci://ghcr.io/brawer/geosignals:v0.1.0 \
 #     --owner brawer \
-#     --signer-workflow brawer/osmsignals/.github/workflows/release-build.yml
+#     --signer-workflow brawer/geosignals/.github/workflows/release-build.yml
 #
 # https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating
 # https://slsa.dev/spec/v1.2/build-track-basics#build-l3
@@ -87,7 +87,7 @@ jobs:
           --label "org.opencontainers.image.created=$CREATED" \
           --label "org.opencontainers.image.revision=$SHA" \
           --label "org.opencontainers.image.version=${TAG#v}" \
-          --tag osmsignals .
+          --tag geosignals .
     - name: Smoke-test image
       run: |
         mkdir -p "$RUNNER_TEMP/data"
@@ -95,7 +95,7 @@ jobs:
         podman run --rm --network=none \
           --userns=keep-id --user "$(id -u):$(id -g)" \
           --volume "$RUNNER_TEMP/data:/data" \
-          osmsignals osm-node-density \
+          geosignals osm-node-density \
           --input zugerland.osm.pbf --output-dir .
         test -s "$RUNNER_TEMP/data/osm-node-density.2026-01-27.tiff"
         # Reads the first blocks of the latest planet over HTTPS,
@@ -103,7 +103,7 @@ jobs:
         podman run --rm \
           --userns=keep-id --user "$(id -u):$(id -g)" \
           --volume "$RUNNER_TEMP/data:/data" \
-          osmsignals osm-node-density --smoke-test --output-dir planet
+          geosignals osm-node-density --smoke-test --output-dir planet
         ls -l "$RUNNER_TEMP"/data/planet/osm-node-density.*.tiff
     - name: Push image
       env:
@@ -114,12 +114,12 @@ jobs:
         echo "$TOKEN" | podman login ghcr.io --username "$ACTOR" --password-stdin
         mkdir -p out
         podman push --digestfile out/digest.txt \
-          osmsignals "docker://$IMAGE:$TAG-${{ matrix.arch }}"
+          geosignals "docker://$IMAGE:$TAG-${{ matrix.arch }}"
         echo "pushed $IMAGE@$(cat out/digest.txt)"
     - name: Generate SBOM
       run: |
         scripts/install-syft.sh "$RUNNER_TEMP/bin"
-        podman save --format oci-archive --output "$RUNNER_TEMP/image.tar" osmsignals
+        podman save --format oci-archive --output "$RUNNER_TEMP/image.tar" geosignals
         PATH="$RUNNER_TEMP/bin:$PATH" scripts/sbom.sh \
           "$RUNNER_TEMP/image.tar" "$IMAGE" "$(cat out/digest.txt)" out/sbom.cdx.json
     - name: Upload digest and SBOM
@@ -146,14 +146,14 @@ jobs:
         ACTOR: ${{ github.actor }}
       run: |
         echo "$TOKEN" | podman login ghcr.io --username "$ACTOR" --password-stdin
-        podman manifest create osmsignals
+        podman manifest create geosignals
         for arch in amd64 arm64; do
-          podman manifest add osmsignals "docker://$IMAGE@$(cat "image-$arch/digest.txt")"
+          podman manifest add geosignals "docker://$IMAGE@$(cat "image-$arch/digest.txt")"
         done
         mkdir -p image-index
         podman manifest push --digestfile image-index/digest.txt \
-          osmsignals "docker://$IMAGE:$TAG"
-        podman manifest push osmsignals "docker://$IMAGE:latest"
+          geosignals "docker://$IMAGE:$TAG"
+        podman manifest push geosignals "docker://$IMAGE:latest"
         echo "pushed $IMAGE@$(cat image-index/digest.txt)"
     - name: Upload index digest
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2

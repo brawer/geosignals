@@ -39,7 +39,7 @@ jobs:
         ls -l liechtenstein.osm.pbf
     - name: Run smoke test
       env:
-        OSMSIGNALS_SMOKE_PBF: liechtenstein.osm.pbf
+        GEOSIGNALS_SMOKE_PBF: liechtenstein.osm.pbf
       run: cargo test --locked --release --test osm_node_density smoke_test -- --nocapture
     - name: Read the latest planet over HTTPS
       run: |

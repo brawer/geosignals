@@ -215,7 +215,7 @@ it.
 
 The file keeps Nominatim's grid: plain longitude and latitude
 (EPSG:4326), from −180° to 180° and from 90° to −90°, with 16,384 × 16,384
-cells. That is not Web Mercator, unlike the other osmsignals rasters.
+cells. That is not Web Mercator, unlike the other geosignals rasters.
 
 - **Pixel size.** A pixel is 360/16384° wide and 180/16384° tall. At the
   equator, that is about 2.4 km wide and 1.2 km tall. At 45° it is

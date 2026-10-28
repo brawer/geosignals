@@ -50,7 +50,7 @@ pub const SCALE: f64 = 65536.0;
 const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
     name: "nominatim-secondary-importance",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#nominatim-secondary-importance").
-    // Frozen: catalogs key on it.
+    // Frozen: catalogs key on it, so it keeps the repo's old name.
     id: "e4f31309-3b17-57f1-beb2-29a90aaab267",
     title: "Nominatim secondary importance",
     description: "Nominatim's secondary importance raster, republished unchanged as a \
@@ -166,7 +166,7 @@ pub fn run<R: Read>(mut input: R, cfg: &Config) -> Result<Summary> {
     let (min_value, max_value) = hist.range();
     let meta = Metadata {
         description: DESCRIPTION.into(),
-        software: format!("osmsignals {}", env!("CARGO_PKG_VERSION")),
+        software: format!("geosignals {}", env!("CARGO_PKG_VERSION")),
         copyright: "© OpenStreetMap contributors, ODbL 1.0; \
                     importance by Nominatim from Wikipedia links"
             .into(),

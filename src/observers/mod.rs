@@ -37,7 +37,7 @@ use std::time::Instant;
 const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
     name: "naturalist-observers",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#naturalist-observers").
-    // Frozen: catalogs key on it.
+    // Frozen: catalogs key on it, so it keeps the repo's old name.
     id: "27f5f48c-05ed-5d0f-bd8f-39f008bf7075",
     title: "Naturalist observers",
     description: "How many different people reported wildlife observations per km² \
@@ -632,7 +632,7 @@ fn write_layer(
     let title = layer.title();
     let meta = Metadata {
         description: title.clone(),
-        software: format!("osmsignals {}", env!("CARGO_PKG_VERSION")),
+        software: format!("geosignals {}", env!("CARGO_PKG_VERSION")),
         copyright: copyright.clone(),
         min_value: hist.range().0,
         max_value: hist.range().1,

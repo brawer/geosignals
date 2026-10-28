@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 pub const FILE_NAME: &str = "datapackage.json";
 
 const SCHEMA: &str = "https://datapackage.org/profiles/2.0/datapackage.json";
-const HOMEPAGE: &str = "https://github.com/brawer/osmsignals";
+const HOMEPAGE: &str = "https://github.com/brawer/geosignals";
 
 /// Media type of Cloud-Optimized GeoTIFF, as registered by the OGC.
 const COG_MEDIA_TYPE: &str = "image/tiff; application=geotiff; profile=cloud-optimized";
@@ -131,7 +131,7 @@ pub fn write_layers(
             l.bom,
             "Data bill of materials (CycloneDX 1.7)",
             &format!(
-                "Which osmsignals release made {}, from which sources.",
+                "Which geosignals release made {}, from which sources.",
                 l.title
             ),
             "json",
@@ -243,7 +243,7 @@ fn document(
                 &format!("{}-bom", pkg.name),
                 bom,
                 "Data bill of materials (CycloneDX 1.7)",
-                &format!("Which osmsignals release made the GeoTIFF, from which {noun}."),
+                &format!("Which geosignals release made the GeoTIFF, from which {noun}."),
                 "json",
                 CYCLONEDX_MEDIA_TYPE,
                 bom_hashes,
