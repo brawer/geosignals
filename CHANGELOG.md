@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.3.0](https://github.com/brawer/osmsignals/compare/v0.2.0...v0.3.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* the node-density subcommand is now osm-node-density.
+
+### 🆕 Enhancements
+
+* add naturalist-observers signal from GBIF's iNaturalist and eBird data ([d2c187e](https://github.com/brawer/osmsignals/commit/d2c187e8981e53b5182e0f9a81344993ea6f7863))
+* add transit-departures signal from GTFS feeds ([#23](https://github.com/brawer/osmsignals/issues/23)) ([4446de3](https://github.com/brawer/osmsignals/commit/4446de38b79d17a40e7cbbb9174aa6e4860b6152))
+* also write a raster of nodes with tags ([#36](https://github.com/brawer/osmsignals/issues/36)) ([a0184b9](https://github.com/brawer/osmsignals/commit/a0184b99e621f19a9cc0438f2a76a862525883e1))
+* describe the transit dataset and widen its open-license coverage ([#32](https://github.com/brawer/osmsignals/issues/32)) ([0eee63c](https://github.com/brawer/osmsignals/commit/0eee63c8f875c38e0a2e08305953dc53f12210aa))
+* fetch Transitous and Transitland Atlas over HTTP ([#28](https://github.com/brawer/osmsignals/issues/28)) ([2ec8e64](https://github.com/brawer/osmsignals/commit/2ec8e642287df84f645e39a25e55a09225c9f12e))
+* rename node-density to osm-node-density ([#33](https://github.com/brawer/osmsignals/issues/33)) ([93426fc](https://github.com/brawer/osmsignals/commit/93426fc8c846fcdce07962ca6feabc37f7312a43))
+* republish Nominatim's secondary importance raster as a COG ([#21](https://github.com/brawer/osmsignals/issues/21)) ([f04ddbc](https://github.com/brawer/osmsignals/commit/f04ddbcb9ac9ba72fd87d7198dec37d0f8ae1dec))
+
+
+### 🐞 Bug Fixes
+
+* satisfy newer clippy and cargo-deny license check ([0dd4f11](https://github.com/brawer/osmsignals/commit/0dd4f1185b36fcd8210e6a1cab51518867aa8072))
+
+
+### ⚡ Performance
+
+* keep condensed transit feeds in memory-mapped scratch files ([#29](https://github.com/brawer/osmsignals/issues/29)) ([4e01349](https://github.com/brawer/osmsignals/commit/4e01349e06919a8d81f6354cf3731b16e20467a4))
+
+
+### 📚 Documentation
+
+* describe the naturalist-observers data for analysts ([380a53a](https://github.com/brawer/osmsignals/commit/380a53ac569c08b469f74a9ca46f3647fc37c391))
+* describe the Nominatim importance dataset and how Nominatim ranks results ([#34](https://github.com/brawer/osmsignals/issues/34)) ([ad9e51c](https://github.com/brawer/osmsignals/commit/ad9e51c010d0667a687c19e533735a41a09676bf))
+* describe the osm-node-density data for analysts ([#35](https://github.com/brawer/osmsignals/issues/35)) ([5503d06](https://github.com/brawer/osmsignals/commit/5503d06708a38b07c3da86cafdb188ccd51bfdf6))
+* record how the static musl build fares on memory ([#31](https://github.com/brawer/osmsignals/issues/31)) ([2d8c328](https://github.com/brawer/osmsignals/commit/2d8c32819627dc685e895c4cf2a6180ebcd6666b))
+* state iNaturalist freshness as measured ([e3ee575](https://github.com/brawer/osmsignals/commit/e3ee575e927a9103528ba5cb090d5c083e1f6535))
+* verify and source the eBird claims, fix review nits ([3dd2d21](https://github.com/brawer/osmsignals/commit/3dd2d2132b3554d227ca3a93cf30d6d01a756ca9))
+
+
+### 🚧 Maintenance
+
+* allow CC0-1.0 dependencies in cargo-deny ([d8be3ca](https://github.com/brawer/osmsignals/commit/d8be3cabe8abd27ebc61bec0e4f36100f970e448))
+* **ci:** Bump actions/download-artifact from 8.0.1 to 8.0.2 ([#24](https://github.com/brawer/osmsignals/issues/24)) ([88fffe7](https://github.com/brawer/osmsignals/commit/88fffe7e3a6ef70c49c7c57a0ad009d38f05280a))
+* **ci:** Bump actions/upload-artifact from 7.0.1 to 7.0.2 ([#27](https://github.com/brawer/osmsignals/issues/27)) ([a0f8729](https://github.com/brawer/osmsignals/commit/a0f8729fed5ed07e294d68a983b51453b056c6e2))
+* **ci:** Bump docker/login-action from 4.6.0 to 4.7.0 ([#26](https://github.com/brawer/osmsignals/issues/26)) ([25b0feb](https://github.com/brawer/osmsignals/commit/25b0feb7d9648b58fc30bfddc63a69f45f9142b3))
+* **ci:** Bump Swatinem/rust-cache from 2.9.2 to 2.9.3 ([#25](https://github.com/brawer/osmsignals/issues/25)) ([9c2fb47](https://github.com/brawer/osmsignals/commit/9c2fb4775f862f643a45e6df62eb5b47bbcdd089))
+
 ## [0.2.0](https://github.com/brawer/osmsignals/compare/v0.1.0...v0.2.0) (2026-10-21)
 
 
