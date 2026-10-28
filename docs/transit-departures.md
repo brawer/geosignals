@@ -1,0 +1,290 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sascha Brawer <sascha@brawer.ch>
+SPDX-License-Identifier: MIT
+-->
+
+# Public transport departures
+
+This data package tells how often public transport departs from each
+place on Earth, by bus, tram, metro, train, ferry or cable car. The
+numbers come from the published timetables (GTFS feeds) of transit
+agencies, as listed by [Transitous](https://transitous.org). They are a
+signal of how well a place is served by scheduled public transport.
+They don't count passengers, and they don't say how far a departure
+goes.
+
+This page is for data analysts who consider using the file. It covers
+what the file contains, how it is computed, its artifacts and biases,
+and its licenses.
+
+There is no planet-wide release yet. The examples below come from a
+test run on three feeds:
+
+- the Swiss national feed;
+- the German national feed from [gtfs.de](https://gtfs.de);
+- the regional feed of [bodo](https://www.bodo.de), a transit
+  association around Lake Constance.
+
+Counts of catalog entries come from the Transitous catalog of
+27 October 2026.
+
+## The files
+
+Each release has one Cloud-Optimized GeoTIFF, a data bill of materials
+(`.cdx.json`), a run report (`.report.json`) and a `datapackage.json`:
+
+| File | What it holds |
+| --- | --- |
+| `transit-departures.2026-10-26.tiff` | The raster |
+| `transit-departures.2026-10-26.cdx.json` | Every catalog and feed that went in, with its URL, SHA-256, license and attribution |
+| `transit-departures.2026-10-26.report.json` | Each feed's status, median week, departures and duplicates, and the sources that were skipped, with reasons |
+| `datapackage.json` | The above as a Frictionless data package, with the license |
+
+The date in each name is the day of the run. A dated file never
+changes; the next release gets new files. On the three test feeds, the
+GeoTIFF is 20 MB.
+
+## The sources
+
+**Catalog.** [Transitous](https://github.com/public-transport/transitous)
+is a community-run, worldwide transit router. Its repository lists
+the GTFS feeds it uses, one JSON file per country or region, under
+CC0. Some entries point into two other catalogs, which we also read:
+
+- the [Transitland Atlas](https://github.com/transitland/transitland-atlas)
+  (CC BY 4.0);
+- the [Mobility Database](https://mobilitydatabase.org).
+
+All three are downloaded on each run. The data BOM records the git
+commit each catalog was at.
+
+**Feeds.** The catalog of 27 October 2026 lists 1,485 static GTFS
+feeds that resolve through Transitous and the Atlas, in 128 regions.
+Another 633 point into the Mobility Database. France (446), Poland
+(139), Hungary (86) and Canada (98) have the most entries. One national
+feed can cover a whole country, though: Germany has 9 entries and
+Switzerland 3.
+
+**What we leave out.**
+
+- Sources Transitous marks as skipped (289 entries), usually because
+  the feed is broken or superseded.
+- Feeds that need credentials, an API key or a POST request (186
+  entries). We never use Transitous's own keys.
+- Feeds that are not static GTFS: GTFS Realtime, GBFS bike sharing,
+  NeTEx.
+- Feeds whose timetable ended more than 90 days before the run date.
+  A feed that has expired probably has a newer version that we couldn't
+  get.
+
+Every skipped source is listed in the run report with its reason.
+
+**Downloads.** Each run asks every publisher whether its feed has
+changed, and downloads it if so. When a publisher is down, we use the
+last copy we fetched, however old, as long as its timetable has not
+expired. The report marks such feeds as `stale`, with the error.
+
+## What a pixel means
+
+A pixel counts **departures per day**: every time a scheduled vehicle
+leaves a stop in that pixel, averaged over the seven days of a typical
+week.
+
+- **Departures.** Every stop of a trip counts, except its last one and
+  stops marked `pickup_type = 1` (no boarding). A train that stops at
+  ten stations counts nine departures, one at each station but the
+  last.
+- **Frequency-based trips.** Trips that run "every 10 minutes from 6:00
+  to 20:00" in `frequencies.txt` are expanded into one trip per start
+  time.
+- **All modes.** All modes count the same: a bus, a tram, a ferry and
+  a 400 m long train are one departure each. The files don't hold
+  `route_type`, so modes can't be told apart.
+
+### The median week
+
+A feed's calendar usually spans weeks to a year, with holidays, school
+breaks and timetable changes. For each feed, we:
+
+1. count its trips on each day;
+2. split the days into weeks from Monday to Sunday;
+3. take the week whose total is the median.
+
+The median skips holiday weeks, which have less service. It also skips
+the thin tail at the end of a feed, where the next timetable is not
+published yet. Weekends stay in, so a place with good weekday service
+and none on Sundays shows 6/7 of its weekday rate.
+
+Each feed gets its own median week, so different feeds can describe
+different weeks. In the test run, the Swiss feed's median week began
+on 14 September 2026, the German one on 22 June and bodo's on 11 May.
+For places served by a single feed, this rarely matters. Where two
+feeds meet, a summer timetable may sit next to a winter one. The
+report lists each feed's median week.
+
+### Duplicates
+
+Neighbouring feeds often contain the same trips. National feeds include
+buses from across the border, and regional feeds overlap with national
+ones. Counting both copies would double the density exactly where
+feeds overlap.
+
+So we compare every pair of feeds with stops in the same 1 km tile
+(zoom 15). A departure of the smaller feed matches if the larger feed
+departs on the same weekday within one pixel (about 150 m) and one
+minute of it. A trip whose departures match at least 80% (and at least
+two of them) is dropped from the smaller feed on that weekday. The
+copy in the largest feed survives.
+
+In the test run:
+
+- **bodo:** 619,483 of its 701,938 weekly departures were also in the
+  German national feed, and were dropped.
+- **Switzerland:** 681,349 of 18.9 million were dropped. Almost all
+  were German operators near the border, such as Südbadenbus and
+  SWEG. These are the same ones Transitous removes by hand.
+
+To check for false matches, we shifted one feed's times by seven
+minutes. That matched 0.05% of trips, against 3.8% without the shift.
+
+The report lists, for each pair of feeds, how many departures were
+dropped and from which agencies.
+
+### Grid and encoding
+
+The file uses the Web Mercator grid (EPSG:3857) and covers the world
+up to about ±85° latitude.
+
+- **Finest level.** Zoom-10 tiles of 256 × 256 pixels, so each pixel is
+  a zoom-18 tile. That is about 153 m wide at the equator, 108 m at 45°
+  and 76 m at 60°. This is fine enough to separate a station from the
+  street next to it.
+- **Overviews.** Ten overview levels follow, down to one tile for the
+  world.
+- **Values.** A pixel stores departures per day per km² of real Earth
+  surface, so pixels can be compared across latitudes. The values are
+  unsigned 16-bit integers on a log scale, with the same encoding as
+  the other osmsignals rasters:
+
+```
+v = 0                                          no departures
+log2(departures per day per km²) = 0.01 · v − 15.01   otherwise
+```
+
+Each step of 100 doubles the density. One departure per day in a pixel
+at the equator (0.0234 km²) is about 43 departures per day per km², or
+v ≈ 2043. To get departures per day back, multiply the density by the
+pixel's area.
+
+The GeoTIFF carries `SCALE` and `OFFSET` metadata, so GDAL and QGIS
+show log2(departures per day per km²) directly. It also carries a
+raster attribute table with a histogram of the values, and a `FEEDS`
+item with the number of feeds that went in.
+
+### Overview pixels
+
+Departures add up. An overview pixel holds the sum of the departures
+below it, divided by its own area. Its density is therefore the
+area-weighted average of its children's densities. So you can also
+build coarser grids yourself by summing departures (density × area).
+The overviews give the same result.
+
+## Artifacts and biases
+
+**Coverage follows open data, not transit.** The default run (`--licenses
+open`) only uses feeds whose license allows republishing with
+attribution (see below). Many feeds have no license in the catalog, and
+those are left out even if the publisher would allow reuse. In the
+catalog of 27 October 2026, 784 of the 1,485 feeds qualify. By region:
+
+- **Mostly covered.** France (430 of 446), Poland (137 of 139),
+  Estonia, Finland, Australia (28 of 31) and the Netherlands.
+- **Partly covered.** Germany (5 of 9, including the national DELFI
+  feed), Italy (30 of 43) and Hungary (13 of 86).
+- **Missing.** Switzerland, Austria, Great Britain, most of Canada (13
+  of 98) and the United States (3 of 341). Their catalog entries carry
+  no license.
+
+The Mobility Database entries come on top of these counts. A missing
+country shows up as zero departures, which looks the same as having no
+transit. Check the BOM before reading a zero as "no service".
+
+**Only what is published as GTFS.** Informal transport is missing:
+minibuses, shared taxis and many intercity coaches. Much of Africa,
+South Asia and Latin America has little or no GTFS, so the file
+understates transit there most. On-demand and flexible services (GTFS
+Flex) have no fixed stops or times, so they count little or not at all.
+
+**Departures, not capacity or reach.** A bus and a long train weigh the
+same, and so do a trip that stops once and a trip that stops at every
+corner. Corridors with closely spaced stops look denser than express
+lines with the same number of trips. A terminus counts its departures,
+but the end stop of each trip counts nothing.
+
+**Stop positions.** Departures sit at the stop's coordinates. Big
+stations list each platform as its own stop, so their departures spread
+over several pixels. Stops without coordinates, or at (0, 0), take
+their parent station's, and are dropped if there is none. Wrong coordinates in a feed
+show up as isolated bright pixels, sometimes far from any line.
+
+**Duplicates that we miss.** Two feeds may place the same stop more than
+150 m apart, or round times differently. Then their copies of a trip
+don't match and both count. Regional feeds that copy a national one
+with different stop positions are the main risk. The opposite error,
+dropping a trip that only looks like another, is rare (see above).
+
+**Stale and changing feeds.** A publisher that is down for one run
+still contributes its last timetable. A feed that disappears from the
+catalog drops out entirely, and its area goes to zero in the next
+release. Compare the reports of two releases before reading a change
+in the raster as a change in service.
+
+**Departures without times.** Stops whose time is left blank (allowed
+in GTFS between timed stops) still count as departures. They are
+ignored only by the duplicate check.
+
+## Licenses and attribution
+
+The file is published under the
+[Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/),
+like OpenStreetMap. We only use feeds whose license allows combining
+them and republishing the result under ODbL with attribution:
+
+- public domain dedications (CC0, PDDL);
+- attribution licenses (CC BY 2.0–4.0, ODC-By, Etalab 2.0, NLOD, DL-DE
+  BY and Zero, OGL UK and Canada, MIT, Apache);
+- the ODbL itself.
+
+Feeds under other share-alike licenses, NonCommercial or NoDerivatives
+licenses, or without a license are left out. A feed's license is the
+SPDX identifier that Transitous gives, or else the one in the
+Transitland Atlas. The Mobility Database only gives a link to the
+license terms. We record that link in the BOM, but it does not qualify
+a feed on its own.
+
+Attribution is per feed. The data BOM lists every feed that went in,
+with its license and the attribution text its publisher asks for. The
+GeoTIFF's `Copyright` tag points to it. If you publish something based
+on the file, credit "public transport data from N GTFS feeds", with N
+from the `Copyright` tag. Link to the BOM, or reproduce its
+attributions.
+
+`--licenses any` uses every feed regardless of license. It is meant for
+internal analysis only. Its files still carry ODbL metadata, but they
+must not be published.
+
+Whether bare counts of departures per place are protected by
+copyright or database rights at all is a separate legal question; this
+page is not legal advice.
+
+## Reproducing the files
+
+```sh
+cargo run --release -- transit-departures \
+  --cache s3://my-bucket/osmsignals --output-dir transit
+```
+
+`--date 2026-10-26` names the run's day. `--only ch/` restricts a run
+to some regions. `--offline` uses only the cache. See the
+[README](../README.md#public-transport-departures) for the cache,
+memory needs and other options.

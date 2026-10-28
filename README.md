@@ -289,7 +289,9 @@ feed used with its URL, SHA-256, license and attribution, and
 catalog's and feed's status (changed, unchanged, stale with the error, expired or
 failed), its median week, its departures per week and duplicates, the
 skipped sources with reasons, and the duplicates by pair of feeds and
-agency.
+agency. For data analysts,
+[docs/transit-departures.md](docs/transit-departures.md) describes
+what the file means, its biases and its licenses.
 
 **Memory.** The condensed feeds live in memory-mapped scratch files
 in `--workdir`, so the kernel pages them in and out as needed; put
