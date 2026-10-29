@@ -263,6 +263,9 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         } else if let Some(p) = &feed.license.permission {
             entry["permission"] = json!(p);
         }
+        if let Some(e) = &feed.license.evidence {
+            entry["evidence"] = json!(e);
+        }
         if let Status::Stale { error } = &f.status {
             entry["error"] = json!(error);
             summary.stale += 1;
@@ -316,6 +319,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         license_url: feed.license.url.clone(),
         copyright: feed.license.attribution.clone(),
         sha256: Some(f.meta.sha256.clone()),
+        evidence: feed.license.evidence.clone(),
     }));
     summary.bom = crate::bom::write_sources(
         &crate::bom::SourcesRun {
@@ -430,6 +434,7 @@ impl CatalogInput {
             license_url,
             copyright: copyright.map(str::to_string),
             sha256: self.fetched.as_ref().map(|(m, _)| m.sha256.clone()),
+            evidence: None,
         }
     }
 

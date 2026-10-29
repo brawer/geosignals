@@ -74,6 +74,15 @@ under the Open Government Licence. Transitous has this data too, but
 merged with National Rail timetables whose terms don't allow us to
 republish them.
 
+The same file also settles the license of some feeds that Transitous
+does list. The Swiss national feeds from
+[opentransportdata.swiss](https://opentransportdata.swiss) come with
+terms of use rather than an open license. opentransportdata.swiss has
+authorised us to redistribute the derived raster without imposing any
+restrictions, such as attribution, on its users; geosignals is on its
+list of [authorised
+databases](https://opentransportdata.swiss/authorised-databases/).
+
 **What we leave out.**
 
 - Sources Transitous marks as skipped (289 entries), usually because
@@ -204,13 +213,14 @@ The overviews give the same result.
 open`) only uses feeds whose license allows republishing with
 attribution (see below). Many feeds have no license in the catalog, and
 those are left out even if the publisher would allow reuse. In the
-catalog of 27 October 2026, 935 of the 1,484 feeds qualify, 150 of
+catalog of 27 October 2026, 938 of the 1,484 feeds qualify, 150 of
 them only through the Transitland Atlas's summary of their terms. By
 region:
 
 - **Mostly covered.** France (430 of 446), Poland (137 of 139), Italy
-  (39 of 43), Estonia, Finland, Australia (28 of 31) and the
-  Netherlands.
+  (39 of 43), Estonia, Finland, Australia (28 of 31), the
+  Netherlands, and Switzerland through the national feeds of
+  opentransportdata.swiss (see above).
 - **Partly covered.**
   - Germany (5 of 7, including the national DELFI feed).
   - The United States (111 of 341), including the New York MTA's buses,
@@ -220,8 +230,7 @@ region:
   - Hungary (13 of 86).
   - Great Britain: buses, trams and ferries in England from BODS, but
     no trains, Scotland, Wales or Northern Ireland.
-- **Missing.** Switzerland and Austria. Their catalog entries carry no
-  license.
+- **Missing.** Austria. Its catalog entries carry no license.
 
 The Mobility Database entries come on top of these counts. A missing
 country shows up as zero departures, which looks the same as having no
@@ -278,7 +287,9 @@ licenses are left out. A feed's license is decided in this order:
 
 1. **Our own check.** For feeds in
    [`checked.json`](../src/transit/checked.json), the license whose
-   terms we read ourselves.
+   terms we read ourselves, or a permission the publisher gave us.
+   The page that states it goes into the BOM as an `evidence`
+   reference.
 2. **SPDX identifier.** Otherwise, the SPDX identifier that Transitous
    gives, or else the one in the Transitland Atlas.
 3. **Atlas summary.** For a feed without a known license, the Atlas
@@ -300,7 +311,8 @@ not a license. If you need certainty for one region, read the terms
 linked from the BOM.
 
 Attribution is per feed. The data BOM lists every feed that went in,
-with its license and the attribution text its publisher asks for. The
+with its license, the attribution text its publisher asks for, and,
+for a feed used by permission, a link to that permission. The
 GeoTIFF's `Copyright` tag points to it. If you publish something based
 on the file, credit "public transport data from N GTFS feeds", with N
 from the `Copyright` tag. Link to the BOM, or reproduce its

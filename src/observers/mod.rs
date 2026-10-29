@@ -656,7 +656,7 @@ fn write_layer(
             license_id: Some(layer.license.id.into()),
             license_url: Some(layer.license.url.into()),
             copyright: Some(layer.dataset.attribution.into()),
-            sha256: None,
+            ..Default::default()
         },
     ];
     ls.bom = bom::write_sources(

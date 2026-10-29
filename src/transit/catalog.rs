@@ -44,6 +44,9 @@ pub struct License {
     pub permission: Option<String>,
     /// Attribution the publisher asks for.
     pub attribution: Option<String>,
+    /// Page that states the license or permission, for feeds we
+    /// checked ourselves; it goes into the data BOM as evidence.
+    pub evidence: Option<String>,
 }
 
 /// SPDX licenses whose data we may combine and republish under ODbL
@@ -285,8 +288,7 @@ fn resolve(source: &Value, catalogs: &Catalogs) -> Result<Option<Feed>, String> 
                 License {
                     spdx: get("license.spdx_identifier").map(str::to_string),
                     url: get("urls.license").map(str::to_string),
-                    attribution: None,
-                    permission: None,
+                    ..Default::default()
                 },
             );
             urls
@@ -307,7 +309,7 @@ fn license_of(v: &Value, spdx_key: &str, attribution_key: &str) -> License {
         spdx: s(spdx_key),
         url: s("url"),
         attribution: s(attribution_key),
-        permission: None,
+        ..Default::default()
     }
 }
 
@@ -318,6 +320,7 @@ fn merge(a: License, b: License) -> License {
         url: a.url.or(b.url),
         attribution: a.attribution.or(b.attribution),
         permission: a.permission.or(b.permission),
+        evidence: a.evidence.or(b.evidence),
     }
 }
 
@@ -327,7 +330,8 @@ const CHECKED: &str = include_str!("checked.json");
 /// Applies [`CHECKED`]: an entry with a `url` adds a feed that
 /// Transitous does not list, if Transitous has its region, and every
 /// entry sets the license of the feed with its id, replacing what the
-/// catalogs say.
+/// catalogs say. An entry's `permission` says why we may use a feed
+/// without an open license, and its `source` is kept as evidence.
 fn apply_checked(feeds: &mut Vec<Feed>, regions: &[&str], checked: &str) -> Result<()> {
     let doc: Value = serde_json::from_str(checked).context("parsing checked.json")?;
     for entry in doc["feeds"].as_array().into_iter().flatten() {
@@ -336,7 +340,11 @@ fn apply_checked(feeds: &mut Vec<Feed>, regions: &[&str], checked: &str) -> Resu
             .context("checked.json: entry without id")?;
         let checked = entry["checked"].as_str().unwrap_or("unknown date");
         let mut license = license_of(&entry["license"], "spdx", "attribution");
-        license.permission = Some(format!("checked by geosignals on {checked}"));
+        license.permission = Some(match entry["permission"].as_str() {
+            Some(p) => format!("{p}; checked by geosignals on {checked}"),
+            None => format!("checked by geosignals on {checked}"),
+        });
+        license.evidence = entry["source"].as_str().map(str::to_string);
         match feeds.iter_mut().find(|f| f.id == id) {
             Some(feed) => feed.license = license,
             None => {
@@ -435,26 +443,50 @@ mod tests {
     fn checked_licenses() {
         let checked = r#"{"feeds": [
             {"id": "ch/sbb", "license": {"spdx": "CC-BY-4.0", "attribution": "SBB"},
-             "checked": "2026-10-28"},
+             "checked": "2026-10-28", "source": "https://sbb.example/terms"},
+            {"id": "ch/otd", "license": {"url": "https://otd.example/terms"},
+             "permission": "Authorised", "source": "https://otd.example/authorised",
+             "checked": "2026-10-29"},
             {"id": "gb/bods", "url": "https://bods.example/all/",
              "license": {"spdx": "OGL-UK-3.0"}},
             {"id": "xx/new", "url": "https://xx.example/"}
         ]}"#;
-        let mut feeds = vec![Feed {
-            id: "ch/sbb".into(),
-            urls: vec!["https://sbb.example/".into()],
+        let unlicensed = |id: &str| Feed {
+            id: id.into(),
+            urls: vec![format!("https://{id}.example/")],
             license: License::default(),
-        }];
+        };
+        let mut feeds = vec![unlicensed("ch/sbb"), unlicensed("ch/otd")];
+        assert!(!feeds[1].license.is_open());
         apply_checked(&mut feeds, &["ch", "gb"], checked).unwrap();
         let ids: Vec<&str> = feeds.iter().map(|f| f.id.as_str()).collect();
-        assert_eq!(ids, ["ch/sbb", "gb/bods"], "xx is not a Transitous region");
+        assert_eq!(
+            ids,
+            ["ch/sbb", "ch/otd", "gb/bods"],
+            "xx is not a Transitous region"
+        );
         assert!(feeds.iter().all(|f| f.license.is_open()));
-        assert_eq!(feeds[0].urls, ["https://sbb.example/"]);
+        assert_eq!(feeds[0].urls, ["https://ch/sbb.example/"]);
         assert_eq!(feeds[0].license.attribution.as_deref(), Some("SBB"));
         assert_eq!(
             feeds[0].license.permission.as_deref(),
             Some("checked by geosignals on 2026-10-28")
         );
+        assert_eq!(
+            feeds[0].license.evidence.as_deref(),
+            Some("https://sbb.example/terms")
+        );
+        let otd = &feeds[1].license;
+        assert_eq!(otd.spdx, None);
+        assert_eq!(
+            otd.permission.as_deref(),
+            Some("Authorised; checked by geosignals on 2026-10-29")
+        );
+        assert_eq!(
+            otd.evidence.as_deref(),
+            Some("https://otd.example/authorised")
+        );
+        assert_eq!(feeds[2].license.evidence, None);
         // The file that ships parses.
         apply_checked(&mut Vec::new(), &[], CHECKED).unwrap();
     }
