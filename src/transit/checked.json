@@ -1,5 +1,5 @@
 {
-  "comment": "Feeds and licenses that geosignals checked itself. An entry with a url adds a feed that Transitous does not list. Every entry sets the license of the feed with its id, replacing what the catalogs say. Keep 'source' pointing to where the license is stated, and 'checked' to the day someone read it.",
+  "comment": "Feeds and licenses that geosignals checked itself. An entry with a url adds a feed that Transitous does not list. Every entry sets the license of the feed with its id, replacing what the catalogs say. 'permission' says why we may use a feed that has no open license. Keep 'source' pointing to where the license or permission is stated, since it goes into the data BOM as evidence, and 'checked' to the day someone read it.",
   "feeds": [
     {
       "id": "gb/bods",
@@ -12,6 +12,36 @@
       },
       "source": "https://findtransportdata.dft.gov.uk/dataset/bus-open-data---download-all-timetable-data--18335fb19c4",
       "checked": "2026-10-28"
+    },
+    {
+      "id": "ch/opentransportdataswiss26",
+      "description": "opentransportdata.swiss, the Swiss open data platform for public transport: national GTFS feed, 2026 timetable. The terms of use are not an open license, but opentransportdata.swiss authorised geosignals to redistribute the derived raster without imposing restrictions such as attribution on downstream users.",
+      "license": {
+        "url": "https://opentransportdata.swiss/en/terms-of-use/"
+      },
+      "permission": "authorised database of opentransportdata.swiss; may be redistributed without downstream restrictions",
+      "source": "https://opentransportdata.swiss/authorised-databases/",
+      "checked": "2026-10-29"
+    },
+    {
+      "id": "ch/opentransportdataswiss27",
+      "description": "opentransportdata.swiss, the Swiss open data platform for public transport: national GTFS feed, 2027 timetable. The terms of use are not an open license, but opentransportdata.swiss authorised geosignals to redistribute the derived raster without imposing restrictions such as attribution on downstream users.",
+      "license": {
+        "url": "https://opentransportdata.swiss/en/terms-of-use/"
+      },
+      "permission": "authorised database of opentransportdata.swiss; may be redistributed without downstream restrictions",
+      "source": "https://opentransportdata.swiss/authorised-databases/",
+      "checked": "2026-10-29"
+    },
+    {
+      "id": "ch/opentransportdataswiss-flex",
+      "description": "opentransportdata.swiss, the Swiss open data platform for public transport: national GTFS feed, on-demand and flexible services (GTFS Flex). The terms of use are not an open license, but opentransportdata.swiss authorised geosignals to redistribute the derived raster without imposing restrictions such as attribution on downstream users.",
+      "license": {
+        "url": "https://opentransportdata.swiss/en/terms-of-use/"
+      },
+      "permission": "authorised database of opentransportdata.swiss; may be redistributed without downstream restrictions",
+      "source": "https://opentransportdata.swiss/authorised-databases/",
+      "checked": "2026-10-29"
     }
   ]
 }

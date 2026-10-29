@@ -183,6 +183,9 @@ pub struct Source {
     /// Attribution that its publisher asks for.
     pub copyright: Option<String>,
     pub sha256: Option<String>,
+    /// Page that grants us permission to use it, such as the publisher's
+    /// list of databases it authorised.
+    pub evidence: Option<String>,
 }
 
 /// What a signal pipeline with many inputs tells the BOM about its run.
@@ -234,6 +237,13 @@ fn source_component(s: &Source) -> Value {
     }
     if let Some(url) = &s.license_url {
         refs.push(json!({"type": "license", "url": url}));
+    }
+    if let Some(url) = &s.evidence {
+        refs.push(json!({
+            "type": "evidence",
+            "url": url,
+            "comment": "Permission to use this input"
+        }));
     }
     let mut c = json!({
         "bom-ref": s.name,
@@ -534,6 +544,26 @@ mod tests {
         assert_eq!(i.name, "zugerland.osm.pbf");
         assert!(i.url.is_none());
         assert_eq!(Input::new("-").name, "stdin");
+    }
+
+    #[test]
+    fn source_evidence() {
+        let c = source_component(&Source {
+            name: "gtfs/ch/otd".into(),
+            license_url: Some("https://otd.example/terms".into()),
+            evidence: Some("https://otd.example/authorised".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            c["licenses"][0]["license"]["url"],
+            "https://otd.example/terms"
+        );
+        let refs = c["externalReferences"].as_array().unwrap();
+        assert_eq!(refs[0]["type"], "license");
+        assert_eq!(refs[1]["type"], "evidence");
+        assert_eq!(refs[1]["url"], "https://otd.example/authorised");
+        let plain = source_component(&Source::default());
+        assert_eq!(plain["externalReferences"], json!([]));
     }
 
     #[test]
