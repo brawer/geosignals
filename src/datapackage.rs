@@ -39,6 +39,10 @@ pub struct Package<'a> {
     pub id: &'a str,
     pub title: &'a str,
     pub description: &'a str,
+    /// Pixel grid of the GeoTIFFs, for the STAC catalog.
+    pub grid: crate::cog::Grid,
+    /// The GeoTIFFs' GDAL_NODATA value, if they have one.
+    pub nodata: Option<u16>,
 }
 
 /// What one run produced.
@@ -51,10 +55,11 @@ pub struct Files<'a> {
     pub bom: &'a Path,
 }
 
-/// Writes `datapackage.json` next to the files and returns its path.
+/// Writes `datapackage.json` next to the files, then the STAC item and
+/// collection (see [`crate::stac`]), and returns the descriptor's path.
 pub fn write(pkg: &Package, files: &Files) -> Result<PathBuf> {
     let bom_hashes = bom::hash_file(files.bom)?;
-    save(files.tiff, &build(pkg, files, &bom_hashes))
+    save(pkg, files.tiff, &build(pkg, files, &bom_hashes))
 }
 
 /// What one run made from many sources produced.
@@ -85,7 +90,7 @@ pub fn write_many(pkg: &Package, files: &ManyFiles) -> Result<PathBuf> {
         &bom_hashes,
         &bom::ODBL,
     );
-    save(files.tiff, &doc)
+    save(pkg, files.tiff, &doc)
 }
 
 /// One of several GeoTIFFs in a package, each under its own license.
@@ -158,14 +163,14 @@ pub fn write_layers(
     if layers.iter().all(|l| l.license.id == layers[0].license.id) {
         doc["licenses"] = json!([license_json(layers[0].license)]);
     }
-    save(layers[0].tiff, &doc)
+    save(pkg, layers[0].tiff, &doc)
 }
 
 fn license_json(l: &License) -> Value {
     json!({"name": l.id, "path": l.url, "title": l.title})
 }
 
-fn save(tiff: &Path, doc: &Value) -> Result<PathBuf> {
+fn save(pkg: &Package, tiff: &Path, doc: &Value) -> Result<PathBuf> {
     let dir = tiff.parent().unwrap_or(Path::new("."));
     let path = dir.join(FILE_NAME);
     let partial = dir.join(format!("{FILE_NAME}.partial"));
@@ -173,6 +178,7 @@ fn save(tiff: &Path, doc: &Value) -> Result<PathBuf> {
     text.push('\n');
     std::fs::write(&partial, text).with_context(|| format!("writing {}", partial.display()))?;
     std::fs::rename(&partial, &path)?;
+    crate::stac::write(pkg, dir, doc)?;
     Ok(path)
 }
 
@@ -294,6 +300,8 @@ mod tests {
             id: "2c7bffea-cc30-533e-ac1d-dc7b4aefd158",
             title: "OpenStreetMap node density",
             description: "Nodes per km².",
+            grid: crate::cog::Grid::WEB_MERCATOR,
+            nodata: None,
         };
         let files = Files {
             input: &input,

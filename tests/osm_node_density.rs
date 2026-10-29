@@ -15,6 +15,9 @@ struct Output {
     image: common::Image,
     bom: serde_json::Value,
     datapackage: serde_json::Value,
+    /// The STAC item and collection.
+    item: serde_json::Value,
+    collection: serde_json::Value,
     sha256: String,
     bom_bytes: usize,
     /// The decoded image of nodes with tags, and its SHA-256.
@@ -53,11 +56,28 @@ fn run(pbf: &Path, run_size: usize) -> Output {
     let bom = serde_json::from_slice(&bom_json).unwrap();
     let datapackage =
         serde_json::from_slice(&std::fs::read(&summary.datapackage).unwrap()).unwrap();
+    let json = |name: &str| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(dir.path().join(name)).unwrap()).unwrap()
+    };
+    // Whatever the input's date, its item is the latest one.
+    let collection = json("collection.json");
+    let item = json(
+        collection["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rfind(|l| l["rel"] == "item")
+            .unwrap()["href"]
+            .as_str()
+            .unwrap(),
+    );
     Output {
         summary,
         image,
         bom,
         datapackage,
+        item,
+        collection,
         sha256: sha256(&tiff),
         bom_bytes: bom_json.len(),
         tagged_image: common::read(&tagged_tiff),
@@ -93,6 +113,8 @@ fn zugerland() {
         datapackage,
         sha256,
         bom_bytes,
+        item,
+        collection,
         ..
     } = run(Path::new(ZUGERLAND), 1000);
     assert_eq!(summary.nodes, 1790);
@@ -135,6 +157,24 @@ fn zugerland() {
     assert_eq!(resources[0]["hash"], format!("sha256:{sha256}"));
     assert_eq!(resources[1]["path"], "osm-node-density.2026-01-27.cdx.json");
     assert_eq!(resources[1]["bytes"], bom_bytes, "BOM size");
+
+    // The STAC item lists the same files, and the collection links to it.
+    let tiff = &item["assets"]["osm-node-density"];
+    assert_eq!(tiff["href"], "./osm-node-density.2026-01-27.tiff");
+    assert_eq!(tiff["file:checksum"], format!("1220{sha256}"));
+    assert_eq!(tiff["proj:code"], "EPSG:3857");
+    assert_eq!(tiff["proj:shape"], serde_json::json!([1 << 18, 1 << 18]));
+    assert!(item["assets"]["osm-tagged-node-density-bom"].is_object());
+    assert_eq!(collection["id"], "osm-node-density");
+    assert_eq!(collection["license"], "ODbL-1.0");
+    assert!(
+        collection["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["rel"] == "item" && l["href"] == "./osm-node-density.2026-01-27.stac.json")
+    );
+
     assert_eq!(image.ifds.len(), 11, "full resolution plus 10 overviews");
     let full = &image.ifds[0];
     assert_eq!(full[&256].int(), 1 << 18, "one pixel per zoom-18 tile");

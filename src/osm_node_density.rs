@@ -25,6 +25,8 @@ const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
         overviews: one for all nodes, and one for nodes with tags other than \
         addresses, source, note, fixme and the like. Pixel values encode log2(nodes per \
         km²); 0 means no nodes.",
+    grid: crate::cog::Grid::WEB_MERCATOR,
+    nodata: None,
 };
 
 pub struct Config {

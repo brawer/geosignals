@@ -10,7 +10,8 @@ SPDX-License-Identifier: MIT
 
 Ranking signals for places on Earth, computed from open data and
 published as [Cloud-Optimized GeoTIFFs](https://cogeo.org/), each with
-a data bill of materials and a Frictionless `datapackage.json`. Work in
+a data bill of materials, a Frictionless `datapackage.json` and a
+[STAC](https://stacspec.org/) catalog. Work in
 progress.
 
 | Signal | What a pixel holds | Source |
