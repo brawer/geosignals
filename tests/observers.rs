@@ -297,6 +297,9 @@ struct Output {
     tiffs: Vec<Vec<u8>>,
     datapackage: Value,
     boms: Vec<Value>,
+    /// The STAC item and collection.
+    item: Value,
+    collection: Value,
 }
 
 fn run(bucket: &str, threads: usize, run_size: usize) -> Output {
@@ -324,11 +327,27 @@ fn run(bucket: &str, threads: usize, run_size: usize) -> Output {
         .collect();
     let datapackage =
         serde_json::from_slice(&std::fs::read(&summary.datapackage).unwrap()).unwrap();
+    let json = |name: &str| -> Value {
+        serde_json::from_slice(&std::fs::read(cfg.output_dir.join(name)).unwrap()).unwrap()
+    };
+    let collection = json("collection.json");
+    let item = json(
+        collection["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rfind(|l| l["rel"] == "item")
+            .unwrap()["href"]
+            .as_str()
+            .unwrap(),
+    );
     Output {
         summary,
         tiffs,
         datapackage,
         boms,
+        item,
+        collection,
     }
 }
 
@@ -425,6 +444,17 @@ fn counts_distinct_observers() {
     assert_eq!(res[5]["name"], "inaturalist-observers-cc-by-nc-4.0-bom");
     assert_eq!(out.datapackage["version"], "2026-10-01");
     assert_eq!(out.datapackage["sources"].as_array().unwrap().len(), 3);
+
+    // The layers differ in license, so the STAC collection says "other"
+    // and each asset states its own.
+    let item = &out.item;
+    assert_eq!(item["id"], "naturalist-observers-2026-10-01");
+    assert!(item["properties"].get("license").is_none());
+    assert_eq!(
+        item["assets"]["inaturalist-observers-cc-by-nc-4.0"]["license"],
+        "CC-BY-NC-4.0"
+    );
+    assert_eq!(out.collection["license"], "other");
 
     // The same input gives the same files, whatever the threads and
     // memory limit.

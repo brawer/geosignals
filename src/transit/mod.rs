@@ -44,6 +44,8 @@ const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
         GeoTIFF with overviews. Counted from GTFS feeds over each feed's median week, \
         with trips that several feeds contain counted once. Pixel values encode \
         log2(departures per day per km²); 0 means no departures.",
+    grid: crate::cog::Grid::WEB_MERCATOR,
+    nodata: None,
 };
 
 /// The Mobility Database's export of its catalog.

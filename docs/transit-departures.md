@@ -31,14 +31,17 @@ Counts of catalog entries come from the Transitous catalog of
 ## The files
 
 Each release has one Cloud-Optimized GeoTIFF, a data bill of materials
-(`.cdx.json`), a run report (`.report.json`) and a `datapackage.json`:
+(`.cdx.json`), a run report (`.report.json`), a `datapackage.json`,
+and a [STAC](running.md#stac-catalog) item and collection:
 
 | File | What it holds |
 | --- | --- |
 | `transit-departures.2026-10-26.tiff` | The raster |
 | `transit-departures.2026-10-26.cdx.json` | Every catalog and feed that went in, with its URL, SHA-256, license and attribution |
 | `transit-departures.2026-10-26.report.json` | Each feed's status, median week, departures and duplicates, and the sources that were skipped, with reasons |
-| `datapackage.json` | The above as a Frictionless data package, with the license |
+| `datapackage.json` | The GeoTIFF and BOM as a Frictionless data package, with the license |
+| `transit-departures.2026-10-26.stac.json` | The GeoTIFF and BOM as a STAC item, with the license and projection |
+| `collection.json` | The STAC collection, linking to the items of every release in the directory |
 
 The date in each name is the day of the run. A dated file never
 changes; the next release gets new files. On the three test feeds, the

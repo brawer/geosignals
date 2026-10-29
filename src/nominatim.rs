@@ -58,6 +58,8 @@ const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
         16384 × 16384 cells. Each pixel holds the highest importance of the \
         OpenStreetMap areas below county level that cover it, such as \
         municipalities and suburbs, as importance × 65536; 0 means no such area.",
+    grid: GRID,
+    nodata: Some(0),
 };
 
 const DESCRIPTION: &str = "Nominatim secondary importance";

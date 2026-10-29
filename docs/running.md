@@ -67,12 +67,59 @@ Each signal writes into `--output-dir`:
   replaced by each run, so clients can fetch it to find the current
   release.
 
+- a [STAC](https://stacspec.org/) item for the release, such as
+  `osm-node-density.2026-10-12.stac.json`, and `collection.json`, the
+  STAC collection of the signal; see [STAC catalog](#stac-catalog).
+
 Give each signal its own output directory, so their `datapackage.json`
-files don't overwrite each other.
+and `collection.json` files don't overwrite each other.
 
 The same inputs and geosignals release give the same files, except for
 the optional `--run-id` (such as a Kubernetes job name), which is
 recorded in the data BOM as the workflow `uid`.
+
+## STAC catalog
+
+Each output directory is also a static, self-contained
+[STAC 1.1](https://github.com/radiantearth/stac-spec/tree/v1.1.0)
+catalog, so tools such as QGIS, [pystac](https://pystac.readthedocs.io/)
+and [STAC Browser](https://radiantearth.github.io/stac-browser/) can
+find and load the GeoTIFFs without reading these docs:
+
+- `collection.json` is the STAC collection of the signal, such as
+  `osm-node-density`. It has the signal's title, description, license,
+  and spatial and temporal extent, links to one item per release, and
+  lists `datapackage.json` as an asset. Like `datapackage.json`, it
+  keeps its name and is rewritten by each run.
+- Each release gets a dated STAC item, such as
+  `osm-node-density.2026-10-12.stac.json`. Its assets are the
+  release's GeoTIFFs (role `data`) and data BOMs (role `metadata`),
+  with size and SHA-256 ([file
+  extension](https://github.com/stac-extensions/file)), and for the
+  GeoTIFFs the EPSG code, shape and transform of the full-resolution
+  image ([projection
+  extension](https://github.com/stac-extensions/projection)) and the
+  band's data type and nodata value. Like the files it lists, the item
+  never changes.
+
+The collection links to every item it finds in the directory, so
+releases you keep stay in the catalog. To drop a release, delete its
+files including the `.stac.json`; the next run leaves it out. All links
+are relative, so the directory can be copied or served from anywhere.
+For example, with pystac:
+
+```python
+import pystac
+collection = pystac.read_file("https://example.org/osm-node-density/collection.json")
+item = max(collection.get_items(), key=lambda i: i.datetime)
+print(item.assets["osm-node-density"].get_absolute_href())
+```
+
+The STAC files hold what `datapackage.json` holds, in another
+vocabulary. STAC has no place for license evidence and per-source
+attribution, so the data BOM stays the authority on sources and
+licenses. The smoke test checks the STAC files with pystac against the
+STAC schemas.
 
 ## Scratch space and memory
 

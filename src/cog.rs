@@ -73,6 +73,39 @@ impl Grid {
     pub fn size(&self) -> u32 {
         (TILE_SIZE as u32) << self.max_zoom
     }
+
+    /// EPSG code of the coordinate reference system.
+    pub fn epsg(&self) -> u32 {
+        match self.crs {
+            Crs::WebMercator => 3857,
+            Crs::Wgs84 => 4326,
+        }
+    }
+
+    /// Area covered, as west, south, east and north in degrees.
+    pub fn bbox(&self) -> [f64; 4] {
+        match self.crs {
+            Crs::WebMercator => {
+                let lat = std::f64::consts::PI.sinh().atan().to_degrees();
+                [-180.0, -lat, 180.0, lat]
+            }
+            Crs::Wgs84 => [-180.0, -90.0, 180.0, 90.0],
+        }
+    }
+
+    /// Affine transform from pixel to CRS coordinates of the
+    /// full-resolution image, in GDAL's order with its last row dropped,
+    /// as the STAC projection extension wants it.
+    pub fn transform(&self) -> [f64; 6] {
+        let n = f64::from(self.size());
+        match self.crs {
+            Crs::WebMercator => {
+                let res = 2.0 * HALF_WORLD / n;
+                [res, 0.0, -HALF_WORLD, 0.0, -res, HALF_WORLD]
+            }
+            Crs::Wgs84 => [360.0 / n, 0.0, -180.0, 0.0, -180.0 / n, 90.0],
+        }
+    }
 }
 
 pub struct Spool {

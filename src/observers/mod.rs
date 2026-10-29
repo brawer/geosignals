@@ -34,6 +34,12 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+/// Web Mercator with one pixel per zoom-16 tile.
+const GRID: Grid = Grid {
+    crs: Crs::WebMercator,
+    max_zoom: MAX_TILE_ZOOM,
+};
+
 const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
     name: "naturalist-observers",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#naturalist-observers").
@@ -46,6 +52,8 @@ const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
         snapshot. One Cloud-Optimized GeoTIFF with overviews per dataset and \
         license; each overview pixel counts the distinct observers of its whole \
         area. Pixel values encode log2(observers per km²); 0 means none.",
+    grid: GRID,
+    nodata: None,
 };
 
 /// A GBIF dataset we read.
@@ -588,10 +596,7 @@ fn write_layer(
     tmp: &Path,
 ) -> Result<LayerSummary> {
     let mut ls = LayerSummary::default();
-    let grid = Grid {
-        crs: Crs::WebMercator,
-        max_zoom: MAX_TILE_ZOOM,
-    };
+    let grid = GRID;
     let dir = tmp.join(layer.name());
     std::fs::create_dir(&dir).with_context(|| format!("creating {}", dir.display()))?;
 

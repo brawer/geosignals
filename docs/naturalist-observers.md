@@ -20,8 +20,11 @@ snapshot of 1 October 2026.
 ## The files
 
 Each release has three Cloud-Optimized GeoTIFFs, each with a data bill
-of materials (`.cdx.json`), and one `datapackage.json` that lists them
-with their licenses:
+of materials (`.cdx.json`), one `datapackage.json` that lists them
+with their licenses, and the same as a [STAC](running.md#stac-catalog)
+item, `naturalist-observers.2026-10-01.stac.json`, in the collection
+`collection.json`. Since the files differ in license, the collection's
+license is `other`, and each asset in the item states its own:
 
 | File | Input records | License | Records used | Observers | Size |
 | --- | --- | --- | ---: | ---: | ---: |

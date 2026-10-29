@@ -26,7 +26,8 @@ and its license. The numbers come from the run on the planet of
 ## The files
 
 Each release has two Cloud-Optimized GeoTIFFs, a data bill of
-materials (`.cdx.json`) for each, and one `datapackage.json`:
+materials (`.cdx.json`) for each, one `datapackage.json`, and a
+[STAC](running.md#stac-catalog) item and collection:
 
 | File | What it holds |
 | --- | --- |
@@ -35,6 +36,8 @@ materials (`.cdx.json`) for each, and one `datapackage.json`:
 | `osm-tagged-node-density.2026-10-19.tiff` | The tagged layer, 332 MB |
 | `osm-tagged-node-density.2026-10-19.cdx.json` | The same for the tagged layer |
 | `datapackage.json` | All of the above as a Frictionless data package, with the license |
+| `osm-node-density.2026-10-19.stac.json` | All of the above as a STAC item, with the license and projection |
+| `collection.json` | The STAC collection, linking to the items of every release in the directory |
 
 The date in each name is the date of the planet's data, taken from the
 replication timestamp in its header. A dated file never changes; the
