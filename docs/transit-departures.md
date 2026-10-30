@@ -84,9 +84,10 @@ rail network of Great Britain, which Transitous does not list on its
 own: a full CIF extract of every train, rail replacement bus and ship.
 It needs a free account at publicdatafeeds.networkrail.co.uk, set as
 `NETWORK_RAIL_USERNAME` and `NETWORK_RAIL_PASSWORD`; without them the
-feed is skipped. Network Rail's data feeds licence has not been checked
-yet, so the feed is only used with `--licenses any` for now. See
-[Timetables in CIF](#timetables-in-cif).
+feed is skipped. Network Rail [releases its data
+feeds](https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/)
+under the Open Government Licence. See [Timetables in
+CIF](#timetables-in-cif).
 
 The same file also settles the license of some feeds that Transitous
 does list. The Swiss national feeds from
@@ -272,8 +273,9 @@ region:
     and Sound Transit. Not included are TriMet, NJ Transit and MARTA.
   - Canada (43 of 98).
   - Hungary (13 of 86).
-  - Great Britain: buses, trams and ferries in England from BODS, but
-    no trains, Scotland, Wales or Northern Ireland.
+  - Great Britain: buses, trams and ferries in England from BODS, and
+    national rail from Network Rail when the run has a login for it, but
+    no buses in Scotland or Wales, and nothing in Northern Ireland.
 - **Missing.** Austria. Its catalog entries carry no license.
 
 The Mobility Database entries come on top of these counts. A missing

@@ -48,12 +48,14 @@
       "url": "https://publicdatafeeds.networkrail.co.uk/ntrod/CifFileAuthenticate?type=CIF_ALL_FULL_DAILY&day=toc-full.CIF.gz",
       "format": "cif",
       "credentials": "NETWORK_RAIL",
-      "description": "Network Rail, SCHEDULE feed: timetables of all trains on the national rail network of Great Britain, plus their replacement buses and ships, as a full daily CIF extract. Needs a free account at publicdatafeeds.networkrail.co.uk. Its stations are placed by TIPLOC in NaPTAN. The Network Rail Infrastructure Limited Data Feeds Licence is said to follow the Open Government Licence, but nobody has read it yet, so 'checked' is missing and the feed is only used with --licenses any.",
+      "description": "Network Rail, SCHEDULE feed: timetables of all trains on the national rail network of Great Britain, plus their replacement buses and ships, as a full daily CIF extract. Needs a free account at publicdatafeeds.networkrail.co.uk. Its stations are placed by TIPLOC in NaPTAN. Network Rail releases its data feeds under the Open Government Licence.",
       "license": {
-        "url": "https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/open-data-feeds/network-rail-infrastructure-limited-data-feeds-licence",
-        "attribution": "Contains information of Network Rail Infrastructure Limited licensed under the following licence: https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/open-data-feeds/network-rail-infrastructure-limited-data-feeds-licence"
+        "spdx": "OGL-UK-3.0",
+        "url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+        "attribution": "Contains public sector information licensed under the Open Government Licence v3.0. Source: Network Rail Infrastructure Limited."
       },
-      "source": "https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/open-data-feeds/network-rail-infrastructure-limited-data-feeds-licence",
+      "source": "https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/",
+      "checked": "2026-10-30",
       "stations": {
         "url": "https://naptan.api.dft.gov.uk/v1/access-nodes?dataFormat=csv",
         "license": {

@@ -540,15 +540,15 @@ mod tests {
         assert_eq!(feeds[2].license.evidence, None);
         // The file that ships parses.
         apply_checked(&mut Vec::new(), &[], CHECKED).unwrap();
-        // Its Network Rail feed is CIF behind a login, and its license
-        // has not been read yet.
+        // Its Network Rail feed is CIF behind a login, under OGL.
         let mut gb = Vec::new();
         apply_checked(&mut gb, &["gb"], CHECKED).unwrap();
         let nr = gb.iter().find(|f| f.id == "gb/networkrail").unwrap();
         assert_eq!(nr.format, Format::Cif);
         assert_eq!(nr.credentials.as_deref(), Some("NETWORK_RAIL"));
         assert!(nr.stations.as_ref().unwrap().url.contains("naptan"));
-        assert!(!nr.license.is_open());
+        assert!(nr.license.is_open());
+        assert_eq!(nr.license.spdx.as_deref(), Some("OGL-UK-3.0"));
         assert!(
             gb.iter()
                 .find(|f| f.id == "gb/bods")
