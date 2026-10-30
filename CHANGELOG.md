@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.1](https://github.com/brawer/geosignals/compare/v0.3.0...v0.3.1) (2026-10-30)
+
+
+### 🆕 Enhancements
+
+* read Network Rail's CIF timetable for trains in Great Britain ([2c04804](https://github.com/brawer/geosignals/commit/2c048044e38235ec6d70f665de78e276797b8bb7))
+* use Network Rail's feed under the Open Government Licence ([d3b5b35](https://github.com/brawer/geosignals/commit/d3b5b351ca3a5aafd6004c20d9609ff29a1abc9e))
+* use Swiss transit feeds by permission of opentransportdata.swiss ([#42](https://github.com/brawer/geosignals/issues/42)) ([f7b2873](https://github.com/brawer/geosignals/commit/f7b2873f9365636b58d97bb7d7c3209c19869cfc))
+* write a static STAC catalog next to each signal's outputs ([#44](https://github.com/brawer/geosignals/issues/44)) ([d48aa87](https://github.com/brawer/geosignals/commit/d48aa8757eec76488044d3396656ce3a81eccbab))
+
+
+### 🚧 Maintenance
+
+* import pystac.validation explicitly in the smoke test ([#45](https://github.com/brawer/geosignals/issues/45)) ([3b859df](https://github.com/brawer/geosignals/commit/3b859df2e0394f2f97afc24c447c4c6b968bf887))
+
 ## [0.3.0](https://github.com/brawer/geosignals/compare/v0.2.0...v0.3.0) (2026-10-28)
 
 
