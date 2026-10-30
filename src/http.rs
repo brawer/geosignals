@@ -115,19 +115,26 @@ pub struct HttpReader {
 
 impl HttpReader {
     pub fn open(agent: ureq::Agent, url: &str) -> Result<HttpReader> {
-        Ok(Self::open_if_changed(agent, url, None, None)?.expect("unconditional request"))
+        Ok(Self::open_if_changed(agent, url, None, None, None)?.expect("unconditional request"))
     }
 
     /// Like [`HttpReader::open`], but sends `If-None-Match` and
     /// `If-Modified-Since` with what an earlier response said, and
     /// returns `None` if the server answers that nothing has changed.
+    /// An `authorization` header goes only to `url`: ureq drops it on
+    /// redirects, and range requests to resume go to where `url`
+    /// redirected, such as a pre-signed S3 URL.
     pub fn open_if_changed(
         agent: ureq::Agent,
         url: &str,
         etag: Option<&str>,
         last_modified: Option<&str>,
+        authorization: Option<&str>,
     ) -> Result<Option<HttpReader>> {
         let mut req = agent.get(url);
+        if let Some(auth) = authorization {
+            req = req.header(header::AUTHORIZATION, auth);
+        }
         if let Some(etag) = etag {
             req = req.header(header::IF_NONE_MATCH, etag);
         }

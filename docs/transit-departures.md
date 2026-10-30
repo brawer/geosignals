@@ -77,6 +77,17 @@ under the Open Government Licence. Transitous has this data too, but
 merged with National Rail timetables whose terms don't allow us to
 republish them.
 
+The same file can add a feed in a format other than GTFS. So far this
+is Network Rail's [SCHEDULE
+feed](https://publicdatafeeds.networkrail.co.uk) for the national
+rail network of Great Britain, which Transitous does not list on its
+own: a full CIF extract of every train, rail replacement bus and ship.
+It needs a free account at publicdatafeeds.networkrail.co.uk, set as
+`NETWORK_RAIL_USERNAME` and `NETWORK_RAIL_PASSWORD`; without them the
+feed is skipped. Network Rail's data feeds licence has not been checked
+yet, so the feed is only used with `--licenses any` for now. See
+[Timetables in CIF](#timetables-in-cif).
+
 The same file also settles the license of some feeds that Transitous
 does list. The Swiss national feeds from
 [opentransportdata.swiss](https://opentransportdata.swiss) come with
@@ -121,6 +132,36 @@ week.
 - **All modes.** All modes count the same: a bus, a tram, a ferry and
   a 400 m long train are one departure each. The files don't hold
   `route_type`, so modes can't be told apart.
+
+### Timetables in CIF
+
+Network Rail publishes its timetable in CIF, a file of fixed-width
+records. A train is a basic schedule, which says from when to when and
+on which weekdays it runs, followed by its calling points. Several
+schedules can share a train's ID: on any one day a cancellation beats
+a new short-term schedule, which beats an overlay, which beats the
+permanent schedule.
+
+- **Departures.** A calling point counts if passengers may board
+  there: the train begins or stops there, picks up, or stops on
+  request. Points where it only sets down, isn't advertised, or passes
+  without stopping don't count, nor does its terminus. Freight and
+  empty trains have no public calls and count nothing.
+- **Times.** We use the public departure time, or the working time
+  where the public one is missing. Like GTFS times, they are local and
+  run on past midnight within a train.
+- **Bank holidays.** The flag that says whether a train runs on bank
+  holidays is ignored, since a median week rarely contains one.
+- **Stations.** CIF names places by TIPLOC and has no coordinates. We
+  place each TIPLOC by its railway station in
+  [NaPTAN](https://www.gov.uk/government/publications/national-public-transport-access-node-schema),
+  where a station's ATCO code is `9100` plus its TIPLOC. Big stations
+  have several TIPLOCs, so a TIPLOC that NaPTAN lacks takes the
+  position of another with the same three-letter station code. The
+  run log names the TIPLOCs that remain unplaced; their departures are
+  dropped.
+- **Modes.** Trains, buses and ships are kept apart in the condensed
+  form, but as for GTFS the output doesn't distinguish them.
 
 ### The median week
 
@@ -348,6 +389,13 @@ Database as its CSV export. They are cached like feeds, under
 `--transitous` and `--transitland-atlas` also take a local tarball or
 checkout, and `--mobility-database` a local CSV file; `none` skips the
 sources that need the Atlas or the Mobility Database.
+
+**Logins.** A feed in `checked.json` with `credentials` needs our own
+login, set as `<PREFIX>_USERNAME` and `<PREFIX>_PASSWORD`, such as
+`NETWORK_RAIL_USERNAME` and `NETWORK_RAIL_PASSWORD`. The password goes
+only to the feed's URL, not to where that redirects, and the BOM
+records the URL we asked for, not the signed URL it redirected to.
+Without the variables, the feed is skipped, except with `--offline`.
 
 **Licenses.** `--licenses open` (the default) uses only feeds under a
 license we may republish, as described in [Licenses and

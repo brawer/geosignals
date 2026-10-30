@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 //! The `transit-departures` pipeline: how often public transport
-//! departs, per day and km², from the GTFS feeds that Transitous lists.
+//! departs, per day and km², from the GTFS feeds that Transitous lists
+//! and the feeds in `checked.json`, such as Network Rail's CIF timetable.
 //!
 //! 1. [`catalog`] reads the feed list and drops feeds whose license we
 //!    cannot republish.
 //! 2. [`fetch`] downloads each feed through the cache, or takes the
-//!    cached copy, and [`gtfs`] condenses it to its median week.
+//!    cached copy, and [`gtfs`] or [`cif`] condenses it to its median week.
 //! 3. [`dedup`] drops trips that a larger feed also has.
 //! 4. Every departure in the median week adds 1/7 to its zoom-18 pixel,
 //!    which gives departures on an average day of that week.
@@ -16,6 +17,7 @@
 //! writes a report with each feed's status and the duplicates found.
 
 pub mod catalog;
+pub mod cif;
 pub mod dedup;
 pub mod fetch;
 pub mod gtfs;
@@ -181,6 +183,16 @@ pub fn run(cfg: &Config) -> Result<Summary> {
             });
             continue;
         }
+        if let Some(prefix) = &f.credentials
+            && !cfg.offline
+            && fetch::credentials(prefix).is_none()
+        {
+            skipped.push(catalog::Skipped {
+                id: f.id,
+                reason: format!("needs {prefix}_USERNAME and {prefix}_PASSWORD"),
+            });
+            continue;
+        }
         selected.push(f);
     }
     eprintln!(
@@ -253,7 +265,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         let mut entry = json!({
             "id": feed.id,
             "status": status_name(&f.status),
-            "url": f.meta.final_url,
+            "url": public_url(feed, &f.meta),
             "fetched": crate::date::rfc3339(f.meta.fetched),
             "median_week": day_string(c.week_start),
             "last_day": day_string(c.last_day),
@@ -313,16 +325,30 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     let hashes = crate::bom::hash_file(&output)?;
 
     let mut sources: Vec<crate::bom::Source> = inputs.iter().map(|i| i.bom_source()).collect();
-    sources.extend(used.iter().map(|(feed, f)| crate::bom::Source {
-        name: fetch::key_prefix(&feed.id),
-        version: f.meta.fetched,
-        url: Some(f.meta.final_url.clone()).filter(|u| !u.is_empty()),
-        license_id: feed.license.spdx.clone(),
-        license_url: feed.license.url.clone(),
-        copyright: feed.license.attribution.clone(),
-        sha256: Some(f.meta.sha256.clone()),
-        evidence: feed.license.evidence.clone(),
-    }));
+    for (feed, f) in &used {
+        sources.push(crate::bom::Source {
+            name: fetch::key_prefix(&feed.id),
+            version: f.meta.fetched,
+            url: Some(public_url(feed, &f.meta)).filter(|u| !u.is_empty()),
+            license_id: feed.license.spdx.clone(),
+            license_url: feed.license.url.clone(),
+            copyright: feed.license.attribution.clone(),
+            sha256: Some(f.meta.sha256.clone()),
+            evidence: feed.license.evidence.clone(),
+        });
+        if let (Some(st), Some(meta)) = (&feed.stations, &f.stations) {
+            sources.push(crate::bom::Source {
+                name: format!("{}/stations", fetch::key_prefix(&feed.id)),
+                version: meta.fetched,
+                url: Some(st.url.clone()),
+                license_id: st.license.spdx.clone(),
+                license_url: st.license.url.clone(),
+                copyright: st.license.attribution.clone(),
+                sha256: Some(meta.sha256.clone()),
+                evidence: None,
+            });
+        }
+    }
     summary.bom = crate::bom::write_sources(
         &crate::bom::SourcesRun {
             sources: &sources,
@@ -454,6 +480,17 @@ impl CatalogInput {
     }
 }
 
+/// Where a feed came from, for the BOM and the report. For a feed
+/// behind a login, that is the URL we asked for: it redirects to a
+/// signed, short-lived URL that is no use to anyone else.
+fn public_url(feed: &Feed, meta: &fetch::Meta) -> String {
+    if feed.credentials.is_some() {
+        meta.url.clone()
+    } else {
+        meta.final_url.clone()
+    }
+}
+
 fn status_name(s: &Status) -> &'static str {
     match s {
         Status::Changed => "changed",
@@ -488,6 +525,7 @@ fn read_catalog(
             urls: &urls,
             magic: if csv { b"" } else { &[0x1f, 0x8b] },
             kind: if csv { "CSV file" } else { "gzipped tarball" },
+            auth: None,
         };
         let (meta, status) = fetcher
             .fetch_file(&src, &path)
