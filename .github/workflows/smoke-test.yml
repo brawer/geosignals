@@ -73,7 +73,7 @@ jobs:
       run: |
         for collection in out/collection.json nominatim/collection.json; do
           "$RUNNER_TEMP/venv/bin/python" -c '
-        import os, sys, pystac
+        import os, sys, pystac, pystac.validation
         href = os.path.abspath(sys.argv[1])
         pystac.validation.validate_all(pystac.StacIO.default().read_json(href), href)
         items = [i.id for i in pystac.read_file(href).get_items()]
