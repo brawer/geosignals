@@ -36,7 +36,7 @@ pub const NO_TIME: u16 = u16::MAX;
 
 /// Longest calendar span we look at, in days, from the first day with
 /// service. Some feeds claim to run until 2099.
-const MAX_SPAN_DAYS: i64 = 371;
+pub(crate) const MAX_SPAN_DAYS: i64 = 371;
 
 /// The median week of one feed.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -870,7 +870,7 @@ unsafe impl Record for Event {
 /// Monday of the median week, given the number of trips on each day
 /// from `first_day` on. Only weeks that lie wholly inside the calendar
 /// and have service count, unless there are none.
-fn median_week(first_day: i64, per_day: &[i64]) -> i64 {
+pub(crate) fn median_week(first_day: i64, per_day: &[i64]) -> i64 {
     let monday = |d: i64| d - i64::from(weekday(d));
     let last = first_day + per_day.len() as i64 - 1;
     let total = |m: i64| -> i64 {

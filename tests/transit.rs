@@ -393,3 +393,183 @@ fn counts_departures_through_cache() {
     let err = transit::run(&empty).unwrap_err();
     assert!(err.to_string().contains("no feed"), "{err}");
 }
+
+/// A record of a CIF file: 80 characters with fields at their offsets.
+fn cif_record(fields: &[(usize, &str)]) -> String {
+    let mut b = vec![b' '; 80];
+    for (at, s) in fields {
+        b[*at..*at + s.len()].copy_from_slice(s.as_bytes());
+    }
+    String::from_utf8(b).unwrap()
+}
+
+/// A gzipped CIF timetable: one train A→B→C on weekdays in June 2026.
+fn cif_timetable() -> Vec<u8> {
+    let lines = [
+        cif_record(&[(0, "HD")]),
+        cif_record(&[
+            (0, "BSN"),
+            (3, "C12345"),
+            (9, "260601"),
+            (15, "260630"),
+            (21, "1111100"),
+            (29, "P"),
+            (79, "P"),
+        ]),
+        cif_record(&[(0, "BX"), (11, "GW")]),
+        cif_record(&[
+            (0, "LO"),
+            (2, "AAAA"),
+            (10, "0700 "),
+            (15, "0700"),
+            (29, "TB"),
+        ]),
+        cif_record(&[
+            (0, "LI"),
+            (2, "BBBB"),
+            (10, "0710 "),
+            (15, "0711 "),
+            (25, "0710"),
+            (29, "0711"),
+            (42, "T "),
+        ]),
+        cif_record(&[
+            (0, "LT"),
+            (2, "CCCC"),
+            (10, "0720 "),
+            (15, "0720"),
+            (25, "TF"),
+        ]),
+        cif_record(&[(0, "ZZ")]),
+    ];
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gz.write_all(lines.join("\n").as_bytes()).unwrap();
+    gz.finish().unwrap()
+}
+
+fn naptan() -> String {
+    let mut s = String::from("ATCOCode,CommonName,Longitude,Latitude,StopType\n");
+    for (t, (lon, lat)) in [("AAAA", A), ("BBBB", B), ("CCCC", C)] {
+        s.push_str(&format!("9100{t},{t},{lon},{lat},RLY\n"));
+    }
+    s
+}
+
+/// Like Network Rail's feed server: `/cif` needs basic authentication
+/// and redirects to a signed URL, which must come without it.
+/// Path and `Authorization` header of each request.
+type RequestLog = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
+fn serve_cif() -> (String, RequestLog) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let log = requests.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let (mut path, mut auth) = (String::new(), None);
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(p) = line.strip_prefix("GET ") {
+                    path = p.split(' ').next().unwrap().to_string();
+                } else if line.to_ascii_lowercase().starts_with("authorization: ") {
+                    auth = Some(line[15..].trim().to_string());
+                }
+            }
+            log.lock().unwrap().push((path.clone(), auth.clone()));
+            let reply = |status: &str, extra: &str, body: &[u8]| {
+                let mut out = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n",
+                    body.len()
+                )
+                .into_bytes();
+                out.extend_from_slice(body);
+                out
+            };
+            let out = match (path.as_str(), auth.as_deref()) {
+                // "user:secret"
+                ("/cif", Some("Basic dXNlcjpzZWNyZXQ=")) => {
+                    reply("302 Found", "Location: /signed/cif.gz?sig=x\r\n", b"")
+                }
+                ("/cif", _) => reply("401 Unauthorized", "", b""),
+                ("/signed/cif.gz?sig=x", None) => {
+                    reply("200 OK", "ETag: \"cif1\"\r\n", &cif_timetable())
+                }
+                ("/naptan.csv", None) => reply("200 OK", "ETag: \"n1\"\r\n", naptan().as_bytes()),
+                _ => reply("400 Bad Request", "", b""),
+            };
+            let _ = stream.write_all(&out);
+        }
+    });
+    (base, requests)
+}
+
+#[test]
+fn fetches_cif_with_login() {
+    use transit::catalog::{Feed, Format, Stations};
+    use transit::fetch::{Fetcher, Status};
+    let (base, requests) = serve_cif();
+    let dir = tempfile::tempdir().unwrap();
+    let store = geosignals::store::open(dir.path().join("cache").to_str().unwrap()).unwrap();
+    let tmp = dir.path().join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let fetcher = Fetcher {
+        store: store.as_ref(),
+        agent: geosignals::http::agent(),
+        tmp: &tmp,
+        offline: false,
+        now: geosignals::date::days_from_civil(2026, 6, 15) * 86_400,
+        retry_delay: std::time::Duration::from_millis(1),
+    };
+    // SAFETY: no other test reads or writes this variable.
+    unsafe {
+        std::env::set_var("GEOSIGNALS_TEST_CIF_USERNAME", "user");
+        std::env::set_var("GEOSIGNALS_TEST_CIF_PASSWORD", "secret");
+    }
+    let feed = Feed {
+        id: "gb/networkrail".into(),
+        urls: vec![format!("{base}/cif")],
+        format: Format::Cif,
+        stations: Some(Stations {
+            url: format!("{base}/naptan.csv"),
+            ..Default::default()
+        }),
+        credentials: Some("GEOSIGNALS_TEST_CIF".into()),
+        ..Default::default()
+    };
+    let f = fetcher.fetch(&feed).unwrap();
+    assert_eq!(f.status, Status::Changed);
+    assert_eq!(f.meta.url, format!("{base}/cif"));
+    assert!(f.stations.is_some());
+    let c = &f.condensed;
+    assert_eq!(c.week_start, geosignals::date::days_from_civil(2026, 6, 8));
+    assert_eq!(c.departures_per_week(), 2 * 5);
+    let stops: Vec<_> = c
+        .trip_stops(&c.trips[0])
+        .iter()
+        .map(|s| (s.x, s.y, s.minute))
+        .collect();
+    let (a, b) = (
+        tile::pixel_xy(A.0, A.1).unwrap(),
+        tile::pixel_xy(B.0, B.1).unwrap(),
+    );
+    assert_eq!(stops, [(a.0, a.1, 7 * 60), (b.0, b.1, 7 * 60 + 11)]);
+    let log = requests.lock().unwrap().clone();
+    assert!(
+        log.contains(&("/signed/cif.gz?sig=x".to_string(), None)),
+        "the password must not follow the redirect: {log:?}"
+    );
+
+    // Without credentials, the publisher refuses, and the cache serves.
+    unsafe {
+        std::env::remove_var("GEOSIGNALS_TEST_CIF_PASSWORD");
+    }
+    let f2 = fetcher.fetch(&feed).unwrap();
+    assert!(matches!(f2.status, Status::Stale { .. }), "{:?}", f2.status);
+    assert_eq!(&f2.condensed, c);
+}

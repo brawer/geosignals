@@ -12,6 +12,11 @@
 //! - `condensed-v<N>-<sha256 prefix>.bin`: its median week; see
 //!   [`super::gtfs`].
 //!
+//! A CIF feed keeps `feed.cif.gz` instead of `feed.zip`, the NaPTAN
+//! file that places its stations under `stations/`, and its median week
+//! as `condensed-cif-v<N>-<feed sha256 prefix>-<stations sha256
+//! prefix>.bin`; see [`super::cif`].
+//!
 //! A run asks the publisher whether the feed changed, with
 //! `If-None-Match` and `If-Modified-Since`. If not, or if the download
 //! has the same hash, it takes the condensed copy from the cache. If
@@ -22,7 +27,8 @@
 //! The catalogs that list the feeds are cached the same way, under
 //! `catalogs/<name>/`, so a run works even when GitHub is down.
 
-use super::catalog::Feed;
+use super::catalog::{Feed, Format};
+use super::cif;
 use super::gtfs::{self, Condensed};
 use crate::http::HttpReader;
 use crate::store::Store;
@@ -105,6 +111,8 @@ pub struct Fetched {
     pub meta: Meta,
     pub status: Status,
     pub condensed: Condensed,
+    /// For CIF: the NaPTAN file that placed the stations.
+    pub stations: Option<Meta>,
 }
 
 pub struct Fetcher<'a> {
@@ -154,12 +162,51 @@ pub struct Source<'a> {
     pub magic: &'a [u8],
     /// What to call it in errors, such as "zip file".
     pub kind: &'a str,
+    /// `Authorization` header for the download, if it needs one.
+    pub auth: Option<String>,
+}
+
+/// The user name and password in `<prefix>_USERNAME` and
+/// `<prefix>_PASSWORD`, if both are set and not empty.
+pub fn credentials(prefix: &str) -> Option<(String, String)> {
+    let var = |k: &str| {
+        std::env::var(format!("{prefix}_{k}"))
+            .ok()
+            .filter(|v| !v.is_empty())
+    };
+    Some((var("USERNAME")?, var("PASSWORD")?))
+}
+
+/// The `Authorization` header for HTTP basic authentication.
+fn basic_auth(user: &str, password: &str) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let data = format!("{user}:{password}");
+    let mut out = String::from("Basic ");
+    for chunk in data.as_bytes().chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 impl Fetcher<'_> {
     /// Fetches and condenses `feed`; fails only if there is neither a
     /// download nor a cached copy.
     pub fn fetch(&self, feed: &Feed) -> Result<Fetched> {
+        if feed.format == Format::Cif {
+            return self.fetch_cif(feed);
+        }
         let prefix = key_prefix(&feed.id);
         let src = Source {
             prefix: &prefix,
@@ -167,6 +214,7 @@ impl Fetcher<'_> {
             urls: &feed.urls,
             magic: b"PK",
             kind: "zip file",
+            auth: auth_header(feed),
         };
         let zip_path = self.tmp.join(format!("{}.zip", prefix.replace('/', "~")));
         let _cleanup = Cleanup(&zip_path);
@@ -184,6 +232,7 @@ impl Fetcher<'_> {
                 meta,
                 status,
                 condensed: c,
+                stations: None,
             });
         }
         if !have_zip {
@@ -196,6 +245,91 @@ impl Fetcher<'_> {
             meta,
             status,
             condensed,
+            stations: None,
+        })
+    }
+
+    /// Like [`Fetcher::fetch`], for a CIF feed and its stations. The
+    /// condensed copy depends on both, so either changing makes a new one.
+    fn fetch_cif(&self, feed: &Feed) -> Result<Fetched> {
+        let prefix = key_prefix(&feed.id);
+        let src = Source {
+            prefix: &prefix,
+            file: "feed.cif.gz",
+            urls: &feed.urls,
+            magic: &[0x1f, 0x8b],
+            kind: "gzipped CIF file",
+            auth: auth_header(feed),
+        };
+        let stations = feed
+            .stations
+            .as_ref()
+            .with_context(|| format!("{}: CIF feed without stations", feed.id))?;
+        let stations_prefix = format!("{prefix}/stations");
+        let stations_urls = [stations.url.clone()];
+        let stations_src = Source {
+            prefix: &stations_prefix,
+            file: "naptan.csv",
+            urls: &stations_urls,
+            magic: b"",
+            kind: "CSV file",
+            auth: None,
+        };
+        let tmp_name = prefix.replace('/', "~");
+        let cif_path = self.tmp.join(format!("{tmp_name}.cif.gz"));
+        let csv_path = self.tmp.join(format!("{tmp_name}.naptan.csv"));
+        let (_c1, _c2) = (Cleanup(&cif_path), Cleanup(&csv_path));
+        let (meta, mut status, have_cif) = self.refresh(&src, &cif_path)?;
+        let (st_meta, st_status, have_csv) = self
+            .refresh(&stations_src, &csv_path)
+            .with_context(|| format!("fetching the stations of {}", feed.id))?;
+        if let Status::Stale { error } = &st_status
+            && !matches!(status, Status::Stale { .. })
+        {
+            status = Status::Stale {
+                error: format!("stations: {error}"),
+            };
+        }
+
+        let condensed_key = format!(
+            "{prefix}/condensed-cif-v{}-{}-{}.bin",
+            cif::VERSION,
+            &meta.sha256[..16],
+            &st_meta.sha256[..16]
+        );
+        if let Some(data) = self.store.get(&condensed_key)?
+            && let Ok(c) = Condensed::decode_in(&data, Some(self.tmp))
+        {
+            return Ok(Fetched {
+                meta,
+                status,
+                condensed: c,
+                stations: Some(st_meta),
+            });
+        }
+        if !have_cif {
+            self.restore_cached(&src, &meta, &cif_path)?;
+        }
+        if !have_csv {
+            self.restore_cached(&stations_src, &st_meta, &csv_path)?;
+        }
+        let naptan =
+            cif::Stations::from_naptan(std::io::BufReader::new(std::fs::File::open(&csv_path)?))
+                .with_context(|| format!("reading the stations of {}", feed.id))?;
+        ensure!(
+            !naptan.is_empty(),
+            "{}: no railway stations in {}",
+            feed.id,
+            stations.url
+        );
+        let condensed = cif::condense_path(&cif_path, &naptan)
+            .with_context(|| format!("condensing {}", feed.id))?;
+        self.store.put(&condensed_key, &condensed.encode()?)?;
+        Ok(Fetched {
+            meta,
+            status,
+            condensed,
+            stations: Some(st_meta),
         })
     }
 
@@ -313,6 +447,7 @@ impl Fetcher<'_> {
             url,
             previous.and_then(|m| m.etag.as_deref()),
             previous.and_then(|m| m.last_modified.as_deref()),
+            src.auth.as_deref(),
         )?
         else {
             ensure!(
@@ -354,6 +489,13 @@ impl Fetcher<'_> {
             checked: self.now,
         }))
     }
+}
+
+/// The `Authorization` header for `feed`, if it needs credentials and
+/// they are set.
+fn auth_header(feed: &Feed) -> Option<String> {
+    let (user, password) = credentials(feed.credentials.as_deref()?)?;
+    Some(basic_auth(&user, &password))
 }
 
 /// Tries per URL, for errors that may go away.
@@ -416,6 +558,17 @@ mod tests {
         );
         assert_eq!(key_prefix("x/.."), "gtfs/x/.._");
         assert_eq!(key_prefix("x/"), "gtfs/x/_");
+    }
+
+    #[test]
+    fn basic_auth_header() {
+        // RFC 7617's example.
+        assert_eq!(
+            basic_auth("Aladdin", "open sesame"),
+            "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
+        assert_eq!(basic_auth("a", ""), "Basic YTo=");
+        assert_eq!(basic_auth("ab", "c"), "Basic YWI6Yw==");
     }
 
     #[test]

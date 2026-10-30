@@ -21,14 +21,39 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// One GTFS feed to fetch.
-#[derive(Clone, Debug, PartialEq)]
+/// One timetable feed to fetch.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Feed {
     /// Unique and stable, such as `ch/opentransportdataswiss26`: the
     /// Transitous region file and the source name.
     pub id: String,
     /// Where to download it, best first. Later URLs are mirrors.
     pub urls: Vec<String>,
+    pub license: License,
+    pub format: Format,
+    /// For CIF: the NaPTAN file that places its stations.
+    pub stations: Option<Stations>,
+    /// Prefix of the environment variables with the user name and
+    /// password for HTTP basic authentication, such as `NETWORK_RAIL`
+    /// for `NETWORK_RAIL_USERNAME` and `NETWORK_RAIL_PASSWORD`. These
+    /// are our own accounts, never the catalogs'.
+    pub credentials: Option<String>,
+}
+
+/// How a feed is encoded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Format {
+    /// A GTFS zip; see [`super::gtfs`].
+    #[default]
+    Gtfs,
+    /// A gzipped CIF file, as Network Rail publishes; see [`super::cif`].
+    Cif,
+}
+
+/// Where the stations of a feed without coordinates come from.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Stations {
+    pub url: String,
     pub license: License,
 }
 
@@ -297,9 +322,9 @@ fn resolve(source: &Value, catalogs: &Catalogs) -> Result<Option<Feed>, String> 
         other => return Err(format!("unknown source type {other:?}")),
     };
     Ok(Some(Feed {
-        id: String::new(),
         urls,
         license,
+        ..Feed::default()
     }))
 }
 
@@ -331,20 +356,43 @@ const CHECKED: &str = include_str!("checked.json");
 /// Transitous does not list, if Transitous has its region, and every
 /// entry sets the license of the feed with its id, replacing what the
 /// catalogs say. An entry's `permission` says why we may use a feed
-/// without an open license, and its `source` is kept as evidence.
+/// without an open license, and its `source` is kept as evidence. An
+/// entry without a `checked` date has a license nobody has read yet,
+/// so only its SPDX identifier, if any, can qualify it.
 fn apply_checked(feeds: &mut Vec<Feed>, regions: &[&str], checked: &str) -> Result<()> {
     let doc: Value = serde_json::from_str(checked).context("parsing checked.json")?;
     for entry in doc["feeds"].as_array().into_iter().flatten() {
         let id = entry["id"]
             .as_str()
             .context("checked.json: entry without id")?;
-        let checked = entry["checked"].as_str().unwrap_or("unknown date");
         let mut license = license_of(&entry["license"], "spdx", "attribution");
-        license.permission = Some(match entry["permission"].as_str() {
-            Some(p) => format!("{p}; checked by geosignals on {checked}"),
-            None => format!("checked by geosignals on {checked}"),
-        });
-        license.evidence = entry["source"].as_str().map(str::to_string);
+        if let Some(checked) = entry["checked"].as_str() {
+            license.permission = Some(match entry["permission"].as_str() {
+                Some(p) => format!("{p}; checked by geosignals on {checked}"),
+                None => format!("checked by geosignals on {checked}"),
+            });
+            license.evidence = entry["source"].as_str().map(str::to_string);
+        }
+        let format = match entry["format"].as_str() {
+            None | Some("gtfs") => Format::Gtfs,
+            Some("cif") => Format::Cif,
+            Some(other) => anyhow::bail!("checked.json: {id} has unknown format {other:?}"),
+        };
+        let stations = match &entry["stations"] {
+            Value::Null => None,
+            s => Some(Stations {
+                url: s["url"]
+                    .as_str()
+                    .with_context(|| format!("checked.json: {id} has stations without url"))?
+                    .to_string(),
+                license: license_of(&s["license"], "spdx", "attribution"),
+            }),
+        };
+        anyhow::ensure!(
+            (format == Format::Cif) == stations.is_some(),
+            "checked.json: {id} needs stations if and only if it is CIF"
+        );
+        let credentials = entry["credentials"].as_str().map(str::to_string);
         match feeds.iter_mut().find(|f| f.id == id) {
             Some(feed) => feed.license = license,
             None => {
@@ -356,6 +404,9 @@ fn apply_checked(feeds: &mut Vec<Feed>, regions: &[&str], checked: &str) -> Resu
                         id: id.to_string(),
                         urls: vec![url.to_string()],
                         license,
+                        format,
+                        stations,
+                        credentials,
                     });
                 }
             }
@@ -454,7 +505,7 @@ mod tests {
         let unlicensed = |id: &str| Feed {
             id: id.into(),
             urls: vec![format!("https://{id}.example/")],
-            license: License::default(),
+            ..Feed::default()
         };
         let mut feeds = vec![unlicensed("ch/sbb"), unlicensed("ch/otd")];
         assert!(!feeds[1].license.is_open());
@@ -489,6 +540,22 @@ mod tests {
         assert_eq!(feeds[2].license.evidence, None);
         // The file that ships parses.
         apply_checked(&mut Vec::new(), &[], CHECKED).unwrap();
+        // Its Network Rail feed is CIF behind a login, and its license
+        // has not been read yet.
+        let mut gb = Vec::new();
+        apply_checked(&mut gb, &["gb"], CHECKED).unwrap();
+        let nr = gb.iter().find(|f| f.id == "gb/networkrail").unwrap();
+        assert_eq!(nr.format, Format::Cif);
+        assert_eq!(nr.credentials.as_deref(), Some("NETWORK_RAIL"));
+        assert!(nr.stations.as_ref().unwrap().url.contains("naptan"));
+        assert!(!nr.license.is_open());
+        assert!(
+            gb.iter()
+                .find(|f| f.id == "gb/bods")
+                .unwrap()
+                .license
+                .is_open()
+        );
     }
 
     #[test]

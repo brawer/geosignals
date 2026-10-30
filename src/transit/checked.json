@@ -1,5 +1,5 @@
 {
-  "comment": "Feeds and licenses that geosignals checked itself. An entry with a url adds a feed that Transitous does not list. Every entry sets the license of the feed with its id, replacing what the catalogs say. 'permission' says why we may use a feed that has no open license. Keep 'source' pointing to where the license or permission is stated, since it goes into the data BOM as evidence, and 'checked' to the day someone read it.",
+  "comment": "Feeds and licenses that geosignals checked itself. An entry with a url adds a feed that Transitous does not list. Every entry sets the license of the feed with its id, replacing what the catalogs say. 'permission' says why we may use a feed that has no open license. Keep 'source' pointing to where the license or permission is stated, since it goes into the data BOM as evidence, and 'checked' to the day someone read it. An entry without 'checked' has a license nobody has read yet; it qualifies only through an open 'spdx' identifier. 'format' is 'gtfs' (the default) or 'cif'; a CIF feed has no coordinates, so 'stations' names the NaPTAN file that places its stations. 'credentials' names the prefix of the environment variables <PREFIX>_USERNAME and <PREFIX>_PASSWORD with our own login for the feed.",
   "feeds": [
     {
       "id": "gb/bods",
@@ -42,6 +42,26 @@
       "permission": "authorised database of opentransportdata.swiss; may be redistributed without downstream restrictions",
       "source": "https://opentransportdata.swiss/authorised-databases/",
       "checked": "2026-10-29"
+    },
+    {
+      "id": "gb/networkrail",
+      "url": "https://publicdatafeeds.networkrail.co.uk/ntrod/CifFileAuthenticate?type=CIF_ALL_FULL_DAILY&day=toc-full.CIF.gz",
+      "format": "cif",
+      "credentials": "NETWORK_RAIL",
+      "description": "Network Rail, SCHEDULE feed: timetables of all trains on the national rail network of Great Britain, plus their replacement buses and ships, as a full daily CIF extract. Needs a free account at publicdatafeeds.networkrail.co.uk. Its stations are placed by TIPLOC in NaPTAN. The Network Rail Infrastructure Limited Data Feeds Licence is said to follow the Open Government Licence, but nobody has read it yet, so 'checked' is missing and the feed is only used with --licenses any.",
+      "license": {
+        "url": "https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/open-data-feeds/network-rail-infrastructure-limited-data-feeds-licence",
+        "attribution": "Contains information of Network Rail Infrastructure Limited licensed under the following licence: https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/open-data-feeds/network-rail-infrastructure-limited-data-feeds-licence"
+      },
+      "source": "https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/open-data-feeds/network-rail-infrastructure-limited-data-feeds-licence",
+      "stations": {
+        "url": "https://naptan.api.dft.gov.uk/v1/access-nodes?dataFormat=csv",
+        "license": {
+          "spdx": "OGL-UK-3.0",
+          "url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+          "attribution": "Contains public sector information licensed under the Open Government Licence v3.0. Source: Department for Transport, National Public Transport Access Nodes (NaPTAN)."
+        }
+      }
     }
   ]
 }
