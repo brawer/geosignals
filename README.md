@@ -18,7 +18,7 @@ progress.
 | --- | --- | --- |
 | [OSM node density](docs/osm-node-density.md) | OpenStreetMap nodes per km², and a second layer of tagged features | OSM planet |
 | [Nominatim secondary importance](docs/nominatim-secondary-importance.md) | Nominatim's location-based importance, republished unchanged | nominatim.org |
-| [Public transport departures](docs/transit-departures.md) | Departures per day and km² | GTFS feeds listed by Transitous |
+| [Public transport departures](docs/transit/README.md) | Departures per day and km² | GTFS feeds listed by Transitous |
 | [Naturalist observers](docs/naturalist-observers.md) | Distinct iNaturalist and eBird observers per km² | GBIF occurrence snapshot |
 
 Each page explains what the files mean, how they are made, their

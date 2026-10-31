@@ -15,7 +15,8 @@ goes.
 
 This page is for data analysts who consider using the file. It covers
 what the file contains, how it is computed, its artifacts and biases,
-and its licenses.
+and its licenses. How the pipeline is built, and why, is in the
+[technical design](TECHNICAL_DESIGN.md).
 
 There is no planet-wide release yet. The examples below come from a
 test run on three feeds:
@@ -32,7 +33,7 @@ Counts of catalog entries come from the Transitous catalog of
 
 Each release has one Cloud-Optimized GeoTIFF, a data bill of materials
 (`.cdx.json`), a run report (`.report.json`), a `datapackage.json`,
-and a [STAC](running.md#stac-catalog) item and collection:
+and a [STAC](../running.md#stac-catalog) item and collection:
 
 | File | What it holds |
 | --- | --- |
@@ -70,7 +71,7 @@ Switzerland 3.
 
 We also add feeds that Transitous doesn't list, whose licenses we
 checked ourselves, from
-[`src/transit/checked.json`](../src/transit/checked.json). So far this
+[`src/transit/checked.json`](../../src/transit/checked.json). So far this
 is one feed: the Department for Transport's
 [Bus Open Data Service](https://www.bus-data.dft.gov.uk) for England,
 under the Open Government Licence. Transitous has this data too, but
@@ -349,7 +350,7 @@ Feeds under other share-alike licenses, NonCommercial or NoDerivatives
 licenses are left out. A feed's license is decided in this order:
 
 1. **Our own check.** For feeds in
-   [`checked.json`](../src/transit/checked.json), the license whose
+   [`checked.json`](../../src/transit/checked.json), the license whose
    terms we read ourselves, or a permission the publisher gave us.
    The page that states it goes into the BOM as an `evidence`
    reference.
@@ -398,7 +399,7 @@ cargo run --release -- transit-departures \
 
 `--date 2026-10-26` names the run's day; it defaults to today (UTC).
 `--only ch/` restricts a run to some regions, and may be given several
-times. See [Running geosignals](running.md) for the container, the data
+times. See [Running geosignals](../running.md) for the container, the data
 BOM, `datapackage.json` and scratch space.
 
 **Catalogs.** Transitous and the Transitland Atlas are downloaded as
@@ -439,14 +440,14 @@ feeds plus about a GB of condensed ones.
 
 **Memory.** The condensed feeds live in memory-mapped scratch files
 in `--workdir`, so the kernel pages them in and out as needed; put
-`--workdir` on disk, not on a RAM disk. The heap holds little more
-than the feeds being condensed: 200–250 MB for the Swiss or German
-national feed, among the largest anywhere, so `--threads` still bounds
-memory. On the Swiss, German and bodo feeds, a warm run takes 16
-seconds and 100 MB of heap, and still finishes within a 300 MB memory
-limit; a cold run on 4 threads, which condenses all three at once,
-takes a minute and 430 MB of heap, within a 1 GB limit. A planet-wide
-run should fit on a 2 GB machine with 2–4 threads. Scratch disk needs
-16 bytes per stop time of each feed being condensed, plus the
-condensed feeds, about a GB planet-wide, plus the downloads in
-progress.
+`--workdir` on disk, not on a RAM disk. Condensing a feed needs 16
+bytes of scratch disk per stop time, also memory-mapped, plus its
+tables on the heap. On the Swiss and German national feeds, among the
+largest anywhere, a run on 4 threads that condenses both takes 42
+seconds and at most 530 MB of heap, plus 490 MB of mapped stop times;
+a warm run takes 11 seconds and 460 MB of heap. With `--threads 1`,
+the heap stays under 340 MB, so `--threads` bounds memory. A
+planet-wide run should fit on a 2 GB machine with 2–4 threads. Scratch
+disk also holds the condensed feeds, about a GB planet-wide, and the
+downloads in progress. See the
+[technical design](TECHNICAL_DESIGN.md#measurements) for the details.
