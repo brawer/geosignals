@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.1](https://github.com/brawer/geosignals/compare/v0.3.0...v0.3.1) (2026-10-31)
+
+
+### 🆕 Enhancements
+
+* add format 2 of condensed transit feeds ([f3f31cc](https://github.com/brawer/geosignals/commit/f3f31ccf0ad5ea7d559c4433edf332f20db874b0))
+* compare feeds for duplicates on the days both cover ([c27d521](https://github.com/brawer/geosignals/commit/c27d5216259585055f16249c6835f70cb6a472fe))
+* condense GTFS and CIF feeds to format 2 ([d6fcca3](https://github.com/brawer/geosignals/commit/d6fcca3940f0b15b27eef814552b3b83ed00c072))
+* credit gtfs-data.jp feeds by name ([b10be0a](https://github.com/brawer/geosignals/commit/b10be0a695d191053518882aee2cc6909a9ef936))
+* read gtfs-data.jp as a catalog for Japan ([3a7d11a](https://github.com/brawer/geosignals/commit/3a7d11a8b204a55487423c531511fa44e28e40f5))
+* read Network Rail's CIF timetable for trains in Great Britain ([2c04804](https://github.com/brawer/geosignals/commit/2c048044e38235ec6d70f665de78e276797b8bb7))
+* show the average day of the past 12 months ([498b4ea](https://github.com/brawer/geosignals/commit/498b4ea9568d663b40a0c564cd4fcdf8634b90f8))
+* use Network Rail's feed under the Open Government Licence ([d3b5b35](https://github.com/brawer/geosignals/commit/d3b5b351ca3a5aafd6004c20d9609ff29a1abc9e))
+* use Swiss transit feeds by permission of opentransportdata.swiss ([#42](https://github.com/brawer/geosignals/issues/42)) ([f7b2873](https://github.com/brawer/geosignals/commit/f7b2873f9365636b58d97bb7d7c3209c19869cfc))
+* write a static STAC catalog next to each signal's outputs ([#44](https://github.com/brawer/geosignals/issues/44)) ([d48aa87](https://github.com/brawer/geosignals/commit/d48aa8757eec76488044d3396656ce3a81eccbab))
+
+
+### 📚 Documentation
+
+* add a technical design for transit departures ([dcd3986](https://github.com/brawer/geosignals/commit/dcd398677af639beca569bd743bb80b44500220e))
+* shorten the transit user documentation ([a604227](https://github.com/brawer/geosignals/commit/a6042275fa5046b3076c313a893ebe2e78fc9600))
+
+
+### 🚧 Maintenance
+
+* import pystac.validation explicitly in the smoke test ([#45](https://github.com/brawer/geosignals/issues/45)) ([3b859df](https://github.com/brawer/geosignals/commit/3b859df2e0394f2f97afc24c447c4c6b968bf887))
+
 ## [0.3.0](https://github.com/brawer/geosignals/compare/v0.2.0...v0.3.0) (2026-10-28)
 
 
