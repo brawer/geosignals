@@ -71,7 +71,9 @@ catalog ──► fetch ──► condense ──► dedup ──► history ─
    [`repo.rs`](../../src/transit/repo.rs)). This step reads the
    Transitous `feeds/*.json` files and resolves references into the
    Transitland Atlas and the Mobility Database. It adds the feeds of
-   [`checked.json`](../../src/transit/checked.json) and drops feeds
+   gtfs-data.jp, Japan's GTFS repository, from the Atlas's copy of
+   its listing, and those of
+   [`checked.json`](../../src/transit/checked.json). It drops feeds
    whose license we can't republish.
 2. **Fetch** ([`fetch.rs`](../../src/transit/fetch.rs)). This step
    asks each publisher whether its feed changed, downloads it if so,
