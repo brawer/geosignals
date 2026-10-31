@@ -62,6 +62,14 @@ CC0. Some entries point into two other catalogs, which we also read:
 All three are downloaded on each run. The data BOM records the git
 commit each catalog was at.
 
+For Japan, we also read [gtfs-data.jp](https://gtfs-data.jp), the
+national repository of GTFS feeds, mostly of municipal and community
+buses. We take its list of feeds and their licenses from the copy that
+the Transitland Atlas keeps. Where Transitous lists the same feed, we
+use the gtfs-data.jp entry instead. As of 28 October 2026, it lists 566
+static feeds: 456 under CC BY 4.0, 72 under CC0 and 38 without a
+license.
+
 **Feeds.** The catalog of 27 October 2026 lists 1,483 static GTFS
 feeds that resolve through Transitous and the Atlas, in 128 regions.
 Another 633 point into the Mobility Database. France (446), Poland
@@ -272,6 +280,11 @@ region:
     and Sound Transit. Not included are TriMet, NJ Transit and MARTA.
   - Canada (43 of 98).
   - Hungary (13 of 86).
+  - Japan: 528 feeds from gtfs-data.jp, mostly municipal and community
+    buses, plus a Tokyo rail feed and Hiroshima's trams. Most
+    big-city bus and subway operators are missing, since their data
+    needs a key from ODPT, and the JR feed has no license in the
+    catalog.
   - Great Britain: buses, trams and ferries in England from BODS, and
     national rail from Network Rail when the run has a login for it, but
     no buses in Scotland or Wales, and nothing in Northern Ireland.

@@ -12,6 +12,14 @@
 //! skip feeds that need credentials, since Transitous's keys are not
 //! ours to use.
 //!
+//! For Japan, we also read the feeds of [gtfs-data.jp] as a catalog of
+//! their own, from the copy of its listing that the Transitland Atlas
+//! keeps. Transitous takes most of them from the Mobility Database,
+//! which gives no license, while the Atlas has the licenses that
+//! gtfs-data.jp states. Transitous's entries for those feeds are left
+//! out, so that each is read once.
+//!
+//! [gtfs-data.jp]: https://gtfs-data.jp/
 //! [Transitous]: https://github.com/public-transport/transitous
 //! [Transitland Atlas]: https://github.com/transitland/transitland-atlas
 //! [Mobility Database]: https://mobilitydatabase.org/
@@ -138,7 +146,15 @@ pub struct Catalogs {
     pub atlas: HashMap<String, Value>,
     /// Rows of the Mobility Database export `feeds_v2.csv` by id.
     pub mdb: HashMap<String, HashMap<String, String>>,
+    /// The feeds of [gtfs-data.jp], Japan's GTFS repository, as the
+    /// Transitland Atlas mirrors its API in `feeds/gtfs-data-jp.dmfr.json`.
+    ///
+    /// [gtfs-data.jp]: https://gtfs-data.jp/
+    pub gtfs_data_jp: Vec<Value>,
 }
+
+/// The Transitland Atlas file that mirrors gtfs-data.jp.
+const GTFS_DATA_JP_FILE: &str = "gtfs-data-jp.dmfr";
 
 impl Catalogs {
     /// Reads the feed files of the Transitland Atlas.
@@ -149,6 +165,9 @@ impl Catalogs {
             for feed in doc["feeds"].as_array().into_iter().flatten() {
                 if let Some(id) = feed["id"].as_str() {
                     self.atlas.insert(id.to_string(), feed.clone());
+                }
+                if name == GTFS_DATA_JP_FILE {
+                    self.gtfs_data_jp.push(feed.clone());
                 }
             }
         }
@@ -178,12 +197,16 @@ impl Catalogs {
 pub fn load(transitous: &FeedFiles, catalogs: &Catalogs) -> Result<(Vec<Feed>, Vec<Skipped>)> {
     let mut feeds = Vec::new();
     let mut skipped = Vec::new();
+    let jp = gtfs_data_jp(catalogs);
     for (region, data) in &transitous.files {
         let doc: Value = serde_json::from_slice(data)
             .with_context(|| format!("parsing Transitous feeds/{region}.json"))?;
         for source in doc["sources"].as_array().into_iter().flatten() {
             let name = source["name"].as_str().unwrap_or("");
             let id = format!("{region}/{name}");
+            if jp.lists(source) {
+                continue; // read from gtfs-data.jp below
+            }
             match resolve(source, catalogs) {
                 Ok(Some(mut feed)) => {
                     feed.id = id;
@@ -194,6 +217,8 @@ pub fn load(transitous: &FeedFiles, catalogs: &Catalogs) -> Result<(Vec<Feed>, V
             }
         }
     }
+    feeds.extend(jp.feeds);
+    skipped.extend(jp.skipped);
     let mut seen = std::collections::HashSet::new();
     feeds.retain(|f| {
         let new = seen.insert(f.id.clone());
@@ -272,16 +297,7 @@ fn resolve(source: &Value, catalogs: &Catalogs) -> Result<Option<Feed>, String> 
                 .or(urls["static_current"].as_str())
                 .or(urls["static_historic"][0].as_str())
                 .ok_or_else(|| format!("{id} has no static GTFS URL"))?;
-            let lic = &feed["license"];
-            let mut atlas = license_of(lic, "spdx_identifier", "attribution_text");
-            atlas.permission = atlas_permission(lic);
-            if atlas.attribution.is_none() && lic["use_without_attribution"] == "no" {
-                atlas.attribution = lic["attribution_instructions"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string);
-            }
-            license = merge(license, atlas);
+            license = merge(license, atlas_license(&feed["license"]));
             vec![url.to_string()]
         }
         "mobility-database" => {
@@ -326,6 +342,92 @@ fn resolve(source: &Value, catalogs: &Catalogs) -> Result<Option<Feed>, String> 
         license,
         ..Feed::default()
     }))
+}
+
+/// The license of a Transitland Atlas feed.
+fn atlas_license(lic: &Value) -> License {
+    let mut atlas = license_of(lic, "spdx_identifier", "attribution_text");
+    atlas.permission = atlas_permission(lic);
+    if atlas.attribution.is_none() && lic["use_without_attribution"] == "no" {
+        atlas.attribution = lic["attribution_instructions"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+    }
+    atlas
+}
+
+/// The feeds of gtfs-data.jp, read as a catalog of its own.
+#[derive(Default)]
+struct GtfsDataJp {
+    feeds: Vec<Feed>,
+    skipped: Vec<Skipped>,
+    /// Download URLs of the feeds it lists.
+    urls: std::collections::HashSet<String>,
+    /// Atlas ids of the feeds it lists.
+    atlas_ids: std::collections::HashSet<String>,
+    /// Mobility Database ids of the feeds it lists, `jbda-<org>-<feed>`.
+    mdb_ids: std::collections::HashSet<String>,
+}
+
+impl GtfsDataJp {
+    /// Whether a Transitous source is one of these feeds.
+    fn lists(&self, source: &Value) -> bool {
+        let has = |k: &str, set: &std::collections::HashSet<String>| {
+            source[k].as_str().is_some_and(|v| set.contains(v))
+        };
+        has("url", &self.urls)
+            || has("transitland-atlas-id", &self.atlas_ids)
+            || has("mdb-id", &self.mdb_ids)
+    }
+}
+
+/// gtfs-data.jp names a feed by organization and feed id, which appear
+/// in its download URL:
+/// `https://api.gtfs-data.jp/v2/organizations/<org>/feeds/<feed>/files/feed.zip`.
+fn jp_key(url: &str) -> Option<(&str, &str)> {
+    let rest = url.split_once("api.gtfs-data.jp/v2/organizations/")?.1;
+    let (org, rest) = rest.split_once("/feeds/")?;
+    let (feed, _) = rest.split_once('/')?;
+    (!org.is_empty() && !feed.is_empty()).then_some((org, feed))
+}
+
+/// Reads the static GTFS feeds of gtfs-data.jp. Their ids are
+/// `jp/gtfs-data.jp/<org>/<feed>`, and their licenses come from the
+/// Atlas, which copies them from gtfs-data.jp.
+fn gtfs_data_jp(catalogs: &Catalogs) -> GtfsDataJp {
+    let mut out = GtfsDataJp::default();
+    for feed in &catalogs.gtfs_data_jp {
+        if feed["spec"].as_str() != Some("gtfs") {
+            continue;
+        }
+        let Some(url) = feed["urls"]["static_current"].as_str() else {
+            continue;
+        };
+        let Some((org, name)) = jp_key(url) else {
+            continue;
+        };
+        let id = format!("jp/gtfs-data.jp/{org}/{name}");
+        out.urls.insert(url.to_string());
+        if let Some(a) = feed["id"].as_str() {
+            out.atlas_ids.insert(a.to_string());
+        }
+        out.mdb_ids.insert(format!("jbda-{org}-{name}"));
+        if !feed["authorization"].is_null() {
+            out.skipped.push(Skipped {
+                id,
+                reason: "needs authorization".into(),
+            });
+            continue;
+        }
+        out.feeds.push(Feed {
+            id,
+            urls: vec![url.to_string()],
+            license: atlas_license(&feed["license"]),
+            ..Feed::default()
+        });
+    }
+    out
 }
 
 fn license_of(v: &Value, spdx_key: &str, attribution_key: &str) -> License {
@@ -631,6 +733,49 @@ mod tests {
             json!({"type": "http", "url": "u", "http-options": {"headers": {"accept-encoding": "gzip"}}}),
         );
         assert!(ok.unwrap().is_some());
+    }
+
+    #[test]
+    fn reads_gtfs_data_jp() {
+        let url = |org: &str, feed: &str| {
+            format!("https://api.gtfs-data.jp/v2/organizations/{org}/feeds/{feed}/files/feed.zip")
+        };
+        let mut c = Catalogs::default();
+        let atlas = json!({"feeds": [
+            {"id": "f-a-city~bus", "spec": "gtfs", "urls": {"static_current": url("a-city", "bus")},
+             "license": {"spdx_identifier": "CC-BY-4.0", "create_derived_product": "yes"}},
+            {"id": "f-b~tram", "spec": "gtfs", "urls": {"static_current": url("b", "tram")}},
+            {"id": "f-a-city~bus~rt", "spec": "gtfs-rt", "urls": {"realtime_trip_updates": "https://rt/"}},
+        ]});
+        c.load_atlas(&FeedFiles {
+            files: vec![("gtfs-data-jp.dmfr".into(), atlas.to_string().into_bytes())],
+            commit: None,
+        })
+        .unwrap();
+        // Transitous lists the bus through the Mobility Database, and
+        // another feed directly.
+        let jp = json!({"sources": [
+            {"name": "バス", "type": "mobility-database", "mdb-id": "jbda-a-city-bus"},
+            {"name": "rail", "type": "http", "url": "https://rail/", "license": {"spdx-identifier": "MIT"}},
+        ]});
+        let files = FeedFiles {
+            files: vec![("jp".into(), jp.to_string().into_bytes())],
+            commit: None,
+        };
+        let (feeds, skipped) = load(&files, &c).unwrap();
+        let ids: Vec<_> = feeds.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "jp/rail",
+                "jp/gtfs-data.jp/a-city/bus",
+                "jp/gtfs-data.jp/b/tram"
+            ]
+        );
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert_eq!(feeds[1].urls, [url("a-city", "bus")]);
+        assert!(feeds[1].license.is_open());
+        assert!(!feeds[2].license.is_open(), "no license");
     }
 
     #[test]
