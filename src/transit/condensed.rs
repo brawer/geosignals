@@ -9,8 +9,8 @@
 //! departure), the trips (pattern, service, start minute) and the
 //! services (a bitmap of the days each one runs). Most trips share
 //! their pattern with many others, so this is several times smaller
-//! than storing every departure: the Swiss national feed takes 3.7 MB
-//! and the German one 8.9 MB, against 11 and 59 MB for format 1, which
+//! than storing every departure: the Swiss national feed takes 3.3 MB
+//! and the German one 8.1 MB, against 11 and 59 MB for format 1, which
 //! held only the median week.
 //!
 //! Patterns hold departures only: the condenser leaves out a trip's
@@ -55,7 +55,11 @@ pub const STATION_ZOOM: u8 = 24;
 /// Bits between a station position and its zoom-18 pixel.
 const STATION_SHIFT: u8 = STATION_ZOOM - tile::PIXEL_ZOOM;
 
-const ZSTD_LEVEL: i32 = 9;
+/// Zstandard level for the sections. A file is written only when its
+/// feed changes, but read on every run, and reading costs the same at
+/// any level. Level 19 makes the Swiss and German feeds 8 to 10%
+/// smaller than level 9, for 6 and 12 more seconds of compressing.
+const ZSTD_LEVEL: i32 = 19;
 
 /// Largest string or byte field we accept when decoding.
 const MAX_FIELD: usize = 1 << 16;
