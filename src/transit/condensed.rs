@@ -241,6 +241,24 @@ impl Feed {
     /// The departures of the median week, as format 1 held them.
     /// Large arrays go to memory-mapped files in `scratch`, if given.
     pub fn median_week(&self, scratch: Option<&Path>) -> Result<gtfs::Condensed> {
+        Ok(self.median_week_without(scratch, &[])?.0)
+    }
+
+    /// Like [`median_week`](Self::median_week), and for each trip of
+    /// the median week the days on which it is a duplicate, by
+    /// `dropped`: trips as [`all_trips`](Self::all_trips) numbers them,
+    /// sorted, with the calendar days they are duplicates on.
+    ///
+    /// The other feed's calendar often covers other weeks than this
+    /// feed's median week, so a trip counts as a duplicate on every
+    /// weekday on which it was one on some date. This bridges the gap
+    /// until the signal is an average over the whole year, where each
+    /// date counts for itself.
+    pub fn median_week_without(
+        &self,
+        scratch: Option<&Path>,
+        dropped: &[(u32, Service)],
+    ) -> Result<(gtfs::Condensed, Vec<u8>)> {
         let mut c = gtfs::Condensed {
             first_day: self.first_day,
             last_day: self.last_day,
@@ -248,62 +266,95 @@ impl Feed {
             ..Default::default()
         };
         if self.days == 0 {
-            return Ok(c);
+            return Ok((c, Vec::new()));
         }
         c.week_start = gtfs::median_week(self.first_day, &self.trips_per_day());
-        // Days of the median week that each service runs on.
-        let days: Vec<u8> = self
-            .services
-            .iter()
-            .map(|s| {
-                let mut bits = 0u8;
-                for i in 0..7 {
-                    let d = c.week_start + i - self.first_day;
-                    if d >= 0 && s.runs(d as u32) {
-                        bits |= 1 << i;
+        // Days of the median week that a service runs on.
+        let week = |s: &Service| -> u8 {
+            let mut bits = 0u8;
+            for i in 0..7 {
+                let d = c.week_start + i - self.first_day;
+                if d >= 0 && s.runs(d as u32) {
+                    bits |= 1 << i;
+                }
+            }
+            bits
+        };
+        let days: Vec<u8> = self.services.iter().map(week).collect();
+        let (mut trips, mut stops) = (Writer::new(scratch)?, Writer::new(scratch)?);
+        let mut duplicate = Vec::new();
+        let mut dropped = dropped.iter().peekable();
+        for (i, t) in self.all_trips().enumerate() {
+            let mut dup = 0u8;
+            while let Some((n, s)) = dropped.next_if(|(n, _)| *n as usize <= i) {
+                if *n as usize == i {
+                    for d in (0..self.days).filter(|&d| s.runs(d)) {
+                        dup |= 1 << gtfs::weekday(self.first_day + i64::from(d));
                     }
                 }
-                bits
-            })
-            .collect();
-        let (mut trips, mut stops) = (Writer::new(scratch)?, Writer::new(scratch)?);
-        let mut push = |pattern: u32, days: u8, start: u32| -> Result<()> {
-            let p = &self.patterns[pattern as usize];
+            }
+            let d = days[t.service as usize];
+            if d == 0 {
+                continue;
+            }
+            let p = &self.patterns[t.pattern as usize];
             let first = u32::try_from(stops.len())?;
             for s in &p.stops {
                 let (x, y) = self.stations[s.station as usize].pixel();
                 let minute = if s.offset == NO_TIME {
                     NO_TIME
                 } else {
-                    (start + u32::from(s.offset)).min(u32::from(NO_TIME) - 1) as u16
+                    (u32::from(t.start) + u32::from(s.offset)).min(u32::from(NO_TIME) - 1) as u16
                 };
                 stops.push(gtfs::Stop { x, y, minute })?;
             }
             trips.push(gtfs::Trip {
                 agency: p.agency,
                 route_type: p.route_type,
-                days,
+                days: d,
                 start: first,
                 len: u32::try_from(p.stops.len())?,
-            })
-        };
-        for t in &self.trips {
-            let d = days[t.service as usize];
-            if d != 0 {
-                push(t.pattern, d, u32::from(t.start))?;
-            }
-        }
-        for f in &self.frequencies {
-            let d = days[f.service as usize];
-            if d != 0 {
-                for i in 0..f.count() {
-                    push(f.pattern, d, (f.start + i * f.headway) / 60)?;
-                }
-            }
+            })?;
+            duplicate.push(dup & d);
         }
         c.trips = trips.finish()?;
         c.stops = stops.finish()?;
-        Ok(c)
+        Ok((c, duplicate))
+    }
+
+    /// Every trip, with frequency-based ones expanded to one per start
+    /// time: first [`Feed::trips`], then each frequency's trips in order.
+    pub fn all_trips(&self) -> impl Iterator<Item = Trip> + '_ {
+        self.trips
+            .iter()
+            .copied()
+            .chain(self.frequencies.iter().flat_map(|f| {
+                (0..f.count()).map(move |i| Trip {
+                    pattern: f.pattern,
+                    service: f.service,
+                    start: ((f.start + i * f.headway) / 60).min(u32::from(NO_TIME) - 1) as u16,
+                })
+            }))
+    }
+
+    /// Departures on an average day of the calendar.
+    pub fn departures_per_day(&self) -> f64 {
+        if self.days == 0 {
+            return 0.0;
+        }
+        let per_service: Vec<u64> = self
+            .services
+            .iter()
+            .map(|s| s.0.iter().map(|b| u64::from(b.count_ones())).sum())
+            .collect();
+        let total: u64 = self
+            .all_trips()
+            .map(|t| {
+                per_service[t.service as usize]
+                    * self.patterns[t.pattern as usize].stops.len() as u64
+            })
+            .sum();
+        total as f64 / f64::from(self.days)
     }
 
     /// Index of the calendar's first day within its week; 0 is Monday.

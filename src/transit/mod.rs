@@ -220,15 +220,12 @@ pub fn run(cfg: &Config) -> Result<Summary> {
                 report_feeds
                     .push(json!({"id": feed.id, "status": "failed", "error": format!("{e:#}")}));
             }
-            Ok(f)
-                if f.condensed.trips.is_empty()
-                    || f.condensed.last_day < day - cfg.max_expired_days =>
-            {
+            Ok(f) if !f.has_trips || f.last_day < day - cfg.max_expired_days => {
                 summary.expired += 1;
                 report_feeds.push(json!({
                     "id": feed.id,
                     "status": "expired",
-                    "last_day": day_string(f.condensed.last_day),
+                    "last_day": day_string(f.last_day),
                 }));
             }
             Ok(f) => used.push((feed, f)),
@@ -236,8 +233,17 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     }
     ensure!(!used.is_empty(), "no feed could be read");
 
-    let condensed: Vec<&gtfs::Condensed> = used.iter().map(|(_, f)| &f.condensed).collect();
-    let (dropped, overlaps) = dedup::find(&condensed, cfg.threads);
+    let outlines: Vec<&dedup::Outline> = used.iter().map(|(_, f)| &f.outline).collect();
+    let (dropped, overlaps) = dedup::find(
+        &outlines,
+        |i| {
+            used[i]
+                .1
+                .feed()
+                .with_context(|| format!("decoding {}", used[i].0.id))
+        },
+        cfg.threads,
+    )?;
     eprintln!(
         "compared overlapping feeds, found {} with duplicates, in {:.0?}",
         overlaps.len(),
@@ -247,9 +253,12 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     // Departures per week, by pixel.
     let mut counts: HashMap<u64, u64> = HashMap::new();
     for ((feed, f), dropped) in used.iter().zip(&dropped) {
-        let c = &f.condensed;
+        let (c, dropped) = f
+            .feed()
+            .and_then(|full| full.median_week_without(Some(workdir.tmp()), dropped))
+            .with_context(|| format!("decoding {}", feed.id))?;
         let mut duplicates = 0u64;
-        for (t, &d) in c.trips.iter().zip(dropped) {
+        for (t, &d) in c.trips.iter().zip(&dropped) {
             let days = t.days & !d;
             duplicates += u64::from((t.days & d).count_ones()) * u64::from(t.len);
             if days == 0 {
@@ -372,8 +381,9 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         "duplicates": overlaps.iter().map(|o| json!({
             "feed": used[o.smaller].0.id,
             "also_in": used[o.larger].0.id,
-            "departures_per_week": o.departures,
-            "by_agency": o.by_agency.iter().map(|(a, n)| json!({"agency": a, "departures_per_week": n})).collect::<Vec<_>>(),
+            "shared_days": o.days,
+            "departures_per_week": o.departures * 7 / u64::from(o.days.max(1)),
+            "by_agency": o.by_agency.iter().map(|(a, n)| json!({"agency": a, "departures_per_week": n * 7 / u64::from(o.days.max(1))})).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     });
     write_json(&summary.report, &report)?;

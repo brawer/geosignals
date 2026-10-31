@@ -546,7 +546,7 @@ fn fetches_cif_with_login() {
     assert_eq!(f.status, Status::Changed);
     assert_eq!(f.meta.url, format!("{base}/cif"));
     assert!(f.stations.is_some());
-    let c = &f.condensed;
+    let c = &f.feed().unwrap().median_week(None).unwrap();
     assert_eq!(c.week_start, geosignals::date::days_from_civil(2026, 6, 8));
     assert_eq!(c.departures_per_week(), 2 * 5);
     let stops: Vec<_> = c
@@ -571,5 +571,5 @@ fn fetches_cif_with_login() {
     }
     let f2 = fetcher.fetch(&feed).unwrap();
     assert!(matches!(f2.status, Status::Stale { .. }), "{:?}", f2.status);
-    assert_eq!(&f2.condensed, c);
+    assert_eq!(f2.data[..], f.data[..]);
 }
