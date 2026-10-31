@@ -18,6 +18,7 @@
 
 pub mod catalog;
 pub mod cif;
+pub mod condensed;
 pub mod dedup;
 pub mod fetch;
 pub mod gtfs;
