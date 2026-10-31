@@ -9,12 +9,12 @@
 //!   `Last-Modified` and SHA-256, and when it was fetched and checked;
 //! - `feed.zip`: the feed as downloaded, so it can be condensed again
 //!   when the method changes;
-//! - `condensed-v<N>-<sha256 prefix>.bin`: its median week; see
-//!   [`super::gtfs`].
+//! - `condensed-v<N>-<sha256 prefix>.bin`: the condensed feed; see
+//!   [`super::condensed`].
 //!
 //! A CIF feed keeps `feed.cif.gz` instead of `feed.zip`, the NaPTAN
-//! file that places its stations under `stations/`, and its median week
-//! as `condensed-cif-v<N>-<feed sha256 prefix>-<stations sha256
+//! file that places its stations under `stations/`, and its condensed
+//! form as `condensed-cif-v<N>-<feed sha256 prefix>-<stations sha256
 //! prefix>.bin`; see [`super::cif`].
 //!
 //! A run asks the publisher whether the feed changed, with
@@ -29,6 +29,7 @@
 
 use super::catalog::{Feed, Format};
 use super::cif;
+use super::condensed;
 use super::gtfs::{self, Condensed};
 use crate::http::HttpReader;
 use crate::store::Store;
@@ -226,7 +227,7 @@ impl Fetcher<'_> {
             &meta.sha256[..16]
         );
         if let Some(data) = self.store.get(&condensed_key)?
-            && let Ok(c) = Condensed::decode_in(&data, Some(self.tmp))
+            && let Ok(c) = self.median_week(&data)
         {
             return Ok(Fetched {
                 meta,
@@ -238,9 +239,10 @@ impl Fetcher<'_> {
         if !have_zip {
             self.restore_cached(&src, &meta, &zip_path)?;
         }
-        let condensed = gtfs::condense_in(&zip_path, Some(self.tmp))
+        let mut full = gtfs::condense_in(&zip_path, Some(self.tmp))
             .with_context(|| format!("condensing {}", feed.id))?;
-        self.store.put(&condensed_key, &condensed.encode()?)?;
+        full.inputs = vec![input(&meta)];
+        let condensed = self.store_condensed(&condensed_key, &full)?;
         Ok(Fetched {
             meta,
             status,
@@ -298,7 +300,7 @@ impl Fetcher<'_> {
             &st_meta.sha256[..16]
         );
         if let Some(data) = self.store.get(&condensed_key)?
-            && let Ok(c) = Condensed::decode_in(&data, Some(self.tmp))
+            && let Ok(c) = self.median_week(&data)
         {
             return Ok(Fetched {
                 meta,
@@ -322,15 +324,27 @@ impl Fetcher<'_> {
             feed.id,
             stations.url
         );
-        let condensed = cif::condense_path(&cif_path, &naptan)
+        let mut full = cif::condense_path(&cif_path, &naptan)
             .with_context(|| format!("condensing {}", feed.id))?;
-        self.store.put(&condensed_key, &condensed.encode()?)?;
+        full.inputs = vec![input(&meta), input(&st_meta)];
+        let condensed = self.store_condensed(&condensed_key, &full)?;
         Ok(Fetched {
             meta,
             status,
             condensed,
             stations: Some(st_meta),
         })
+    }
+
+    /// The median week of an encoded condensed feed.
+    fn median_week(&self, data: &[u8]) -> Result<Condensed> {
+        condensed::Feed::decode(data)?.median_week(Some(self.tmp))
+    }
+
+    /// Stores a condensed feed in the cache, and returns its median week.
+    fn store_condensed(&self, key: &str, feed: &condensed::Feed) -> Result<Condensed> {
+        self.store.put(key, &feed.encode()?)?;
+        feed.median_week(Some(self.tmp))
     }
 
     /// Fetches `src` into the file `dest`, from its publisher if it
@@ -522,6 +536,26 @@ struct Cleanup<'a>(&'a Path);
 impl Drop for Cleanup<'_> {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(self.0);
+    }
+}
+
+/// What a condensed feed records about a file it was made from.
+fn input(meta: &Meta) -> condensed::Input {
+    let mut sha256 = [0u8; 32];
+    for (i, b) in sha256.iter_mut().enumerate() {
+        *b = meta
+            .sha256
+            .get(2 * i..2 * i + 2)
+            .and_then(|h| u8::from_str_radix(h, 16).ok())
+            .unwrap_or(0);
+    }
+    condensed::Input {
+        url: meta.url.clone(),
+        etag: meta.etag.clone(),
+        last_modified: meta.last_modified.clone(),
+        sha256,
+        sha512: Vec::new(),
+        first_seen: meta.fetched,
     }
 }
 

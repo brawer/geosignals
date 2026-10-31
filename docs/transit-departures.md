@@ -408,15 +408,16 @@ feeds, for internal use only.
 (`s3://bucket/prefix`, configured with `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and `AWS_ENDPOINT_URL`). For each
 feed it keeps the last download, its `ETag`, `Last-Modified` and
-SHA-256, and a condensed copy of its median week. A run asks each
+SHA-256, and a condensed copy with its whole calendar: stations,
+trip patterns, trips and the days each service runs. A run asks each
 publisher whether the feed changed (`If-None-Match`,
 `If-Modified-Since`), retries network errors, tries mirrors such as
 MobilityData's daily copy, and if all fail uses the cached copy,
 however old, as long as its timetable ended at most
 `--max-expired-days` (90) before `--date`. `--offline` uses only the
-cache. The Swiss and German national feeds (160 and 230 MB) condense
-to 11 and 59 MB; a planet-wide cache should need some 20–40 GB of raw
-feeds plus a few GB of condensed ones.
+cache. The Swiss and German national feeds (169 and 242 MB) condense
+to 3.7 and 8.9 MB; a planet-wide cache should need some 20–40 GB of raw
+feeds plus about a GB of condensed ones.
 
 **Memory.** The condensed feeds live in memory-mapped scratch files
 in `--workdir`, so the kernel pages them in and out as needed; put
@@ -428,5 +429,6 @@ seconds and 100 MB of heap, and still finishes within a 300 MB memory
 limit; a cold run on 4 threads, which condenses all three at once,
 takes a minute and 430 MB of heap, within a 1 GB limit. A planet-wide
 run should fit on a 2 GB machine with 2–4 threads. Scratch disk needs
-about 12 bytes per stop time of the median week, a few GB planet-wide,
-plus the downloads in progress.
+16 bytes per stop time of each feed being condensed, plus about 12
+bytes per stop time of the median week, a few GB planet-wide, plus
+the downloads in progress.

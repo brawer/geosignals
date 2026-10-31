@@ -9,9 +9,9 @@
 //! departure), the trips (pattern, service, start minute) and the
 //! services (a bitmap of the days each one runs). Most trips share
 //! their pattern with many others, so this is several times smaller
-//! than storing every departure. In a prototype, the Swiss national
-//! feed took 3.6 MB and the German one 9.8 MB, against 11 and 59 MB
-//! for format 1, which holds only the median week.
+//! than storing every departure: the Swiss national feed takes 3.7 MB
+//! and the German one 8.9 MB, against 11 and 59 MB for format 1, which
+//! held only the median week.
 //!
 //! Patterns hold departures only: the condenser leaves out a trip's
 //! last stop and stops where boarding is not allowed.
@@ -26,9 +26,12 @@
 //! run that only needs the inputs' ETags, or the departures per station
 //! and week, reads the first one or two frames and stops.
 
+use super::gtfs;
+use crate::slab::Writer;
 use crate::tile;
 use anyhow::{Context, Result, bail, ensure};
 use std::io::Read;
+use std::path::Path;
 
 /// Version of this file format.
 pub const FORMAT: u8 = 2;
@@ -160,6 +163,12 @@ impl Service {
     pub fn set(&mut self, day: u32) {
         self.0[(day / 8) as usize] |= 1 << (day % 8);
     }
+    pub fn clear(&mut self, day: u32) {
+        self.0[(day / 8) as usize] &= !(1 << (day % 8));
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|&b| b == 0)
+    }
     pub fn runs(&self, day: u32) -> bool {
         self.0
             .get((day / 8) as usize)
@@ -178,6 +187,9 @@ pub struct Feed {
     pub first_day: i64,
     /// Days the calendar covers, at most [`MAX_DAYS`].
     pub days: u32,
+    /// Last day with service, as the feed claims it; this may lie
+    /// beyond the [`MAX_DAYS`] we keep.
+    pub last_day: i64,
     pub agencies: Vec<String>,
     /// Sorted by the Hilbert key of their pixel; see [`Feed::normalize`].
     pub stations: Vec<Station>,
@@ -204,9 +216,99 @@ impl Totals {
 }
 
 impl Feed {
+    /// Trips and frequency trips that run on each day of the calendar.
+    pub fn trips_per_day(&self) -> Vec<i64> {
+        let mut per_service = vec![0i64; self.services.len()];
+        for t in &self.trips {
+            per_service[t.service as usize] += 1;
+        }
+        for f in &self.frequencies {
+            per_service[f.service as usize] += i64::from(f.count());
+        }
+        let mut per_day = vec![0i64; self.days as usize];
+        for (s, &n) in self.services.iter().zip(&per_service) {
+            if n > 0 {
+                for (d, v) in per_day.iter_mut().enumerate() {
+                    if s.runs(d as u32) {
+                        *v += n;
+                    }
+                }
+            }
+        }
+        per_day
+    }
+
+    /// The departures of the median week, as format 1 held them.
+    /// Large arrays go to memory-mapped files in `scratch`, if given.
+    pub fn median_week(&self, scratch: Option<&Path>) -> Result<gtfs::Condensed> {
+        let mut c = gtfs::Condensed {
+            first_day: self.first_day,
+            last_day: self.last_day,
+            agencies: self.agencies.clone(),
+            ..Default::default()
+        };
+        if self.days == 0 {
+            return Ok(c);
+        }
+        c.week_start = gtfs::median_week(self.first_day, &self.trips_per_day());
+        // Days of the median week that each service runs on.
+        let days: Vec<u8> = self
+            .services
+            .iter()
+            .map(|s| {
+                let mut bits = 0u8;
+                for i in 0..7 {
+                    let d = c.week_start + i - self.first_day;
+                    if d >= 0 && s.runs(d as u32) {
+                        bits |= 1 << i;
+                    }
+                }
+                bits
+            })
+            .collect();
+        let (mut trips, mut stops) = (Writer::new(scratch)?, Writer::new(scratch)?);
+        let mut push = |pattern: u32, days: u8, start: u32| -> Result<()> {
+            let p = &self.patterns[pattern as usize];
+            let first = u32::try_from(stops.len())?;
+            for s in &p.stops {
+                let (x, y) = self.stations[s.station as usize].pixel();
+                let minute = if s.offset == NO_TIME {
+                    NO_TIME
+                } else {
+                    (start + u32::from(s.offset)).min(u32::from(NO_TIME) - 1) as u16
+                };
+                stops.push(gtfs::Stop { x, y, minute })?;
+            }
+            trips.push(gtfs::Trip {
+                agency: p.agency,
+                route_type: p.route_type,
+                days,
+                start: first,
+                len: u32::try_from(p.stops.len())?,
+            })
+        };
+        for t in &self.trips {
+            let d = days[t.service as usize];
+            if d != 0 {
+                push(t.pattern, d, u32::from(t.start))?;
+            }
+        }
+        for f in &self.frequencies {
+            let d = days[f.service as usize];
+            if d != 0 {
+                for i in 0..f.count() {
+                    push(f.pattern, d, (f.start + i * f.headway) / 60)?;
+                }
+            }
+        }
+        c.trips = trips.finish()?;
+        c.stops = stops.finish()?;
+        Ok(c)
+    }
+
     /// Index of the calendar's first day within its week; 0 is Monday.
     fn first_weekday(&self) -> u32 {
-        super::gtfs::weekday(self.first_day)
+        gtfs::weekday(self.first_day)
     }
 
     /// Number of weeks, Monday to Sunday, that the calendar touches.
@@ -374,6 +476,7 @@ impl Feed {
         put_varint(&mut b, u64::from(self.condenser));
         put_signed(&mut b, self.first_day);
         put_varint(&mut b, u64::from(self.days));
+        put_signed(&mut b, self.last_day);
         put_varint(&mut b, self.inputs.len() as u64);
         for i in &self.inputs {
             put_str(&mut b, &i.url);
@@ -515,6 +618,7 @@ impl Feed {
             f.condenser = u32::try_from(r.varint()?)?;
             f.first_day = r.signed()?;
             f.days = u32::try_from(r.varint()?)?;
+            f.last_day = r.signed()?;
             for _ in 0..r.varint()? {
                 let url = r.string()?;
                 let etag = Some(r.string()?).filter(|s| !s.is_empty());
@@ -666,7 +770,7 @@ pub fn decode_totals(data: &[u8]) -> Result<(i64, Totals)> {
         totals = read_totals(r)?;
         Ok(())
     })?;
-    totals.first_monday = first_day - i64::from(super::gtfs::weekday(first_day));
+    totals.first_monday = first_day - i64::from(gtfs::weekday(first_day));
     Ok((first_day, totals))
 }
 
@@ -860,6 +964,7 @@ mod tests {
             }],
             // 2026-06-03, a Wednesday.
             first_day: crate::date::days_from_civil(2026, 6, 3),
+            last_day: crate::date::days_from_civil(2026, 6, 12),
             days,
             agencies: vec!["VBZ".into(), "SBB".into()],
             stations: vec![
