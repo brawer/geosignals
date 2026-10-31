@@ -107,17 +107,41 @@ feed by feed.
 A condensed feed holds everything later steps need from a timetable,
 and nothing else. Its format is *format 2*: the magic `OSMSGTFS`, a
 format byte, then seven sections. Each section is its own zstd frame
-(level 9) behind a 4-byte little-endian length.
+(level 19) behind a 4-byte little-endian length.
 
 | Section | What it holds |
 | --- | --- |
-| Header | Condenser version, calendar (first day, length, last day), inputs (URL, ETag, Last-Modified, SHA-256, SHA-512, first seen), agencies |
+| Header | Condenser version, calendar (first day, length, last day), inputs (URL, final URL, ETag, Last-Modified, SHA-256, SHA-512, size, first seen), agencies |
 | Weekly totals | Departures per station and calendar week (Monday to Sunday) |
 | Stations | Zoom-24 positions (about 2 m), front-coded stop IDs |
 | Patterns | Agency, route type, and departures as (station, minutes after the first departure) |
 | Trips | (pattern, service, start minute), sorted, delta-coded |
 | Frequencies | (pattern, service, start, end, headway) for `frequencies.txt` |
 | Services | A bitmap of calendar days per service, up to 371 days |
+
+### Compression level
+
+A condensed file is written only when its feed changes, but read on
+every run. zstd decompresses equally fast at any level, so the
+condenser spends CPU on writing. Measured on the two national feeds,
+compressing all sections of one file:
+
+| zstd level | Switzerland | Germany |
+| --- | --- | --- |
+| 9 | 3.68 MB, 0.3 s | 8.86 MB, 0.5 s |
+| 11 | 3.65 MB, 0.5 s | 8.78 MB, 1.0 s |
+| 19 | 3.31 MB, 6.3 s | 8.14 MB, 11.9 s |
+| 20 | 3.31 MB, 6.8 s | 8.14 MB, 12.3 s |
+
+Decompressing took 20 to 40 ms at every level. Level 19 saves 8 to 10%,
+and adds about a quarter to the 25 to 28 s it takes to condense
+either feed. Level 11 barely helps, and level 20 gains nothing over
+19 on these files.
+
+The history file stays at level 9. It is rewritten for most feeds on
+most runs, and level 19 would save 1 to 8% of it (Switzerland 0.93 →
+0.85 MB, Germany 2.21 → 2.19 MB with every week of the current
+calendar) for 0.8 to 1.6 s per feed.
 
 ### Patterns
 
@@ -336,7 +360,7 @@ Fixed keys have two consequences:
   share a cache, or each would keep rebuilding what the other wrote.
 - **The raw download is kept,** so a new condenser can run without
   asking any publisher. That costs most of the cache's size: 169 MB and
-  242 MB for the two feeds here, against 3.7 MB and 8.9 MB condensed.
+  242 MB for the two feeds here, against 3.3 MB and 8.1 MB condensed.
 
 In the measured run, the cache held 174 MB for Switzerland and 254 MB
 for Germany. All but 4.7 MB and 11 MB of that was the raw zips.
@@ -382,7 +406,7 @@ maps only 19 MB.
 - **Everything on the heap.** This is the simplest option and fine for
   a laptop. But the German stop times alone take half a GB, and
   holding every decoded feed for dedup would take many GB planet-wide.
-  A decoded German feed takes 100 MB of heap, against 8.9 MB encoded.
+  A decoded German feed takes 100 MB of heap, against 8.1 MB encoded.
 - **Decoded feeds in the map.** Mapping a decoded, fixed-layout
   representation would save decode time (170 ms for the Swiss feed,
   270 ms for the German one). But it needs a stable in-memory layout
@@ -510,7 +534,8 @@ ahead, each run adds to a per-feed history.
 ### The history file
 
 [`history.rs`](../../src/transit/history.rs) keeps
-`transit/<feed>/history.bin`, a zstd-compressed file containing:
+`transit/<feed>/history.bin`, a zstd-compressed file (level 9; see
+[Compression level](#compression-level)) containing:
 
 - the Monday of the week when we first tracked the feed;
 - for each week (keyed by its Monday): the days of that week a
