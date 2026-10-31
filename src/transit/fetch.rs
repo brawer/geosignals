@@ -217,6 +217,11 @@ impl Fetched {
     pub fn feed(&self) -> Result<condensed::Feed> {
         condensed::Feed::decode(&self.data)
     }
+
+    /// Decodes the condensed feed and its stored weekly totals.
+    pub fn feed_with_totals(&self) -> Result<(condensed::Feed, condensed::Totals)> {
+        condensed::Feed::decode_with_totals(&self.data)
+    }
 }
 
 /// A condensed feed and what a run needs to know of it up front.

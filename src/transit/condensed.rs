@@ -449,8 +449,15 @@ impl Feed {
     /// sorted, with the calendar days they are duplicates on.
     pub fn totals_without(&self, dropped: &[(u32, Service)]) -> Totals {
         let mut t = self.totals();
+        self.subtract(&mut t, dropped);
+        t
+    }
+
+    /// Takes the `dropped` trips out of `t`, which holds this feed's
+    /// [`totals`](Self::totals), such as the ones stored with it.
+    pub fn subtract(&self, t: &mut Totals, dropped: &[(u32, Service)]) {
         if dropped.is_empty() {
-            return t;
+            return;
         }
         let offset = self.first_weekday();
         let mut dropped = dropped.iter().peekable();
@@ -470,7 +477,6 @@ impl Feed {
                 }
             }
         }
-        t
     }
 
     /// Days of each week, as [`totals`](Self::totals) numbers the
@@ -689,6 +695,12 @@ impl Feed {
     }
 
     pub fn decode(data: &[u8]) -> Result<Feed> {
+        Ok(Self::decode_with_totals(data)?.0)
+    }
+
+    /// Decodes a feed and the weekly totals stored with it, which equal
+    /// [`totals`](Self::totals) without computing them again.
+    pub fn decode_with_totals(data: &[u8]) -> Result<(Feed, Totals)> {
         let mut r = Sections::new(data)?;
         let mut f = Feed::default();
         r.next(|r| {
@@ -810,7 +822,8 @@ impl Feed {
             totals.weeks == f.weeks() && totals.values.len() == f.stations.len() * f.weeks(),
             "totals do not match the calendar"
         );
-        Ok(f)
+        totals.first_monday = f.first_day - i64::from(f.first_weekday());
+        Ok((f, totals))
     }
 }
 
@@ -1207,6 +1220,8 @@ mod tests {
         assert_eq!(at("8503006:0:1"), [5 + 4, 5]);
         let (_, decoded) = decode_totals(&f.encode().unwrap()).unwrap();
         assert_eq!(decoded, t);
+        let (_, stored) = Feed::decode_with_totals(&f.encode().unwrap()).unwrap();
+        assert_eq!(stored, t);
     }
 
     #[test]

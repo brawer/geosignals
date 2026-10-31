@@ -825,9 +825,14 @@ Moving to format 2 taught us:
 
 ## Open issues
 
-- **Decoding twice.** A warm run decodes each feed for dedup and
-  again for the history. Keeping the weekly totals from the first pass
-  would halve that.
+- **Decoding more than once.** A warm run decodes each feed when
+  loading it from the cache (for its outline), again for the history,
+  and, if it overlaps another feed, in dedup (a large feed once per
+  batch). Keeping each feed decoded, or its weekly totals, in memory
+  between steps would cost about 20–30 MB per national feed (stations ×
+  weeks × 8 bytes), against a 2 GB budget, and each decode is only
+  0.2–0.3 seconds. The history step now takes the weekly totals stored
+  in the condensed file instead of computing them twice.
 - **History growth.** Histories are not yet measured after a full
   year. If they grow large, coarser storage for old weeks (such as
   zoom-17 pixels) is an option.
