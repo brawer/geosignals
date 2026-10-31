@@ -15,6 +15,7 @@ pub mod nominatim;
 pub mod observers;
 pub mod osm_node_density;
 pub mod pbf;
+pub mod publish;
 pub mod pyramid;
 pub mod raster;
 pub mod slab;

@@ -7,7 +7,13 @@ use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(version, about = "Ranking signals for OpenStreetMap")]
+#[command(
+    version,
+    about = "Ranking signals for OpenStreetMap",
+    after_help = "Set PUBLIC_S3_URL=s3://bucket/prefix and the other PUBLIC_S3_* \
+                  variables to upload each release to public storage, \
+                  such as source.coop; see docs/running.md."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -133,8 +139,8 @@ enum Command {
         mobility_database: String,
         /// Where to keep downloaded and condensed feeds between runs: a
         /// directory, or s3://bucket/prefix with credentials in
-        /// CACHE_S3_ACCESS_KEY_ID, CACHE_S3_SECRET_ACCESS_KEY, CACHE_S3_REGION
-        /// and CACHE_S3_ENDPOINT_URL.
+        /// CACHE_S3_ACCESS_KEY_ID, CACHE_S3_SECRET_ACCESS_KEY, CACHE_S3_REGION,
+        /// CACHE_S3_ENDPOINT_URL and, if needed, CACHE_S3_SESSION_TOKEN.
         #[arg(long)]
         cache: String,
         /// Directory for the GeoTIFF, which gets named after --date,
@@ -198,8 +204,29 @@ fn limit_malloc_arenas() {
     }
 }
 
+/// Uploads the release if `PUBLIC_S3_*` is configured, unless the run
+/// only made a partial or non-public output, as `skip` explains.
+fn publish(
+    publisher: Option<&geosignals::publish::Publisher>,
+    datapackage: &std::path::Path,
+    skip: Option<&str>,
+) -> Result<()> {
+    match (publisher, skip) {
+        (None, _) => eprintln!("PUBLIC_S3_URL is not set, so nothing gets uploaded"),
+        (Some(_), Some(why)) => eprintln!("not uploading the output of {why}"),
+        (Some(p), None) => {
+            p.publish(datapackage)?;
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    // Checked before the run, so a bad configuration fails fast.
+    let publisher = geosignals::publish::Publisher::from_env()?;
+    let publisher = publisher.as_ref();
+    match cli.command {
         Command::OsmNodeDensity {
             input,
             output_dir,
@@ -224,6 +251,7 @@ fn main() -> Result<()> {
                 sample_rate,
                 max_blocks: smoke_test.then_some(5),
             };
+            let skip = smoke_test.then_some("a smoke test");
             let input = std::io::BufReader::with_capacity(1 << 20, reader);
             // The second pass reads where the first one did, after
             // redirects, so both see the same planet.
@@ -237,6 +265,7 @@ fn main() -> Result<()> {
             let reopen = (source != "-").then_some(&reopen as geosignals::osm_node_density::Reopen);
             let summary = geosignals::osm_node_density::run(input, reopen, &cfg)?;
             eprintln!("{summary:#?}");
+            publish(publisher, &summary.datapackage, skip)?;
         }
         Command::NominatimSecondaryImportance {
             input,
@@ -256,6 +285,7 @@ fn main() -> Result<()> {
             };
             let summary = geosignals::nominatim::run(reader, &cfg)?;
             eprintln!("{summary:#?}");
+            publish(publisher, &summary.datapackage, None)?;
         }
         Command::NaturalistObservers {
             snapshot,
@@ -267,6 +297,7 @@ fn main() -> Result<()> {
             files,
             run_id,
         } => {
+            let skip = files.is_some().then_some("a run on some files only");
             let cfg = geosignals::observers::Config {
                 bucket,
                 snapshot,
@@ -280,6 +311,7 @@ fn main() -> Result<()> {
             limit_malloc_arenas();
             let summary = geosignals::observers::run(&cfg)?;
             eprintln!("{summary:#?}");
+            publish(publisher, &summary.datapackage, skip)?;
         }
         Command::TransitDepartures {
             transitous,
@@ -302,6 +334,13 @@ fn main() -> Result<()> {
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_secs() as i64,
             };
+            let skip = if licenses == geosignals::transit::Licenses::Any {
+                Some("--licenses any, which may not be redistributable")
+            } else if !only.is_empty() {
+                Some("a run on some feeds only")
+            } else {
+                None
+            };
             let cfg = geosignals::transit::Config {
                 transitous,
                 transitland_atlas: Some(transitland_atlas).filter(|a| a != "none"),
@@ -320,6 +359,7 @@ fn main() -> Result<()> {
             };
             let summary = geosignals::transit::run(&cfg)?;
             eprintln!("{summary:#?}");
+            publish(publisher, &summary.datapackage, skip)?;
         }
     }
     Ok(())

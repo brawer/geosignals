@@ -35,9 +35,10 @@ const PROJECTION: &str = "https://stac-extensions.github.io/projection/v2.0.0/sc
 const FILE: &str = "https://stac-extensions.github.io/file/v2.1.0/schema.json";
 const HOMEPAGE: &str = "https://github.com/brawer/geosignals";
 
-/// What a STAC item file is called, for the release of `pkg` on `date`.
-pub fn item_file_name(pkg: &Package, date: &str) -> String {
-    format!("{}.{date}.stac.json", pkg.name)
+/// What a STAC item file is called, for the release of the package
+/// named `name` (such as `osm-node-density`) on `date`.
+pub fn item_file_name(name: &str, date: &str) -> String {
+    format!("{name}.{date}.stac.json")
 }
 
 /// Writes the STAC item for the release described by `datapackage`, and
@@ -45,7 +46,7 @@ pub fn item_file_name(pkg: &Package, date: &str) -> String {
 pub fn write(pkg: &Package, dir: &Path, datapackage: &Value) -> Result<PathBuf> {
     let item = item(pkg, datapackage);
     let version = datapackage["version"].as_str().unwrap_or_default();
-    let item_path = dir.join(item_file_name(pkg, version));
+    let item_path = dir.join(item_file_name(pkg.name, version));
     save(&item_path, &item)?;
     let items = scan(pkg, dir)?;
     save(

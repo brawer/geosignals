@@ -13,8 +13,10 @@
 //! AWS Signature Version 4, configured from environment variables:
 //! `CACHE_S3_ACCESS_KEY_ID`, `CACHE_S3_SECRET_ACCESS_KEY`,
 //! `CACHE_S3_REGION` (default `auto`, which Cloudflare R2 and others
-//! accept) and `CACHE_S3_ENDPOINT_URL` (default Amazon S3 for the
-//! region). The standard `AWS_*` variables are ignored. Payloads are
+//! accept), `CACHE_S3_ENDPOINT_URL` (default Amazon S3 for the
+//! region) and, for temporary credentials, `CACHE_S3_SESSION_TOKEN`.
+//! The standard `AWS_*` variables are ignored. [`crate::publish`] uses
+//! the same client with `PUBLIC_S3_*` variables. Payloads are
 //! sent unsigned, so uploads stream from disk without being read twice.
 //! Anything else is a local directory.
 
@@ -44,12 +46,21 @@ pub trait Store: Send + Sync {
 
 /// Opens `s3://bucket/prefix` or a local directory.
 pub fn open(location: &str) -> Result<Box<dyn Store>> {
-    if let Some(rest) = location.strip_prefix("s3://") {
-        let (bucket, prefix) = rest.split_once('/').unwrap_or((rest, ""));
-        ensure!(!bucket.is_empty(), "no bucket in {location}");
+    if location.starts_with("s3://") {
+        let (bucket, prefix) = parse_s3_url(location)?;
         return Ok(Box::new(S3::from_env("CACHE_S3_", bucket, prefix)?));
     }
     Ok(Box::new(LocalDir::new(location)?))
+}
+
+/// Splits `s3://bucket/prefix` into bucket and prefix.
+pub fn parse_s3_url(url: &str) -> Result<(&str, &str)> {
+    let rest = url
+        .strip_prefix("s3://")
+        .with_context(|| format!("{url} is not an s3:// URL"))?;
+    let (bucket, prefix) = rest.split_once('/').unwrap_or((rest, ""));
+    ensure!(!bucket.is_empty(), "no bucket in {url}");
+    Ok((bucket, prefix))
 }
 
 /// Rejects keys that could escape the store's root.
@@ -140,6 +151,7 @@ pub struct S3 {
     region: String,
     access_key: String,
     secret_key: String,
+    session_token: Option<String>,
 }
 
 /// Attempts per request before giving up.
@@ -161,6 +173,7 @@ impl S3 {
             var("ENDPOINT_URL").unwrap_or_else(|_| format!("https://s3.{region}.amazonaws.com"));
         let access_key = var("ACCESS_KEY_ID").map_err(|n| anyhow::anyhow!("{n} is not set"))?;
         let secret_key = var("SECRET_ACCESS_KEY").map_err(|n| anyhow::anyhow!("{n} is not set"))?;
+        let session_token = var("SESSION_TOKEN").ok();
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(30)))
@@ -175,6 +188,7 @@ impl S3 {
             region,
             access_key,
             secret_key,
+            session_token,
         })
     }
 
@@ -211,24 +225,31 @@ impl S3 {
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs() as i64;
             let amz_date = amz_date(now);
+            let mut signed = vec![
+                ("host", host.as_str()),
+                ("x-amz-content-sha256", UNSIGNED_PAYLOAD),
+                ("x-amz-date", amz_date.as_str()),
+            ];
+            if let Some(token) = &self.session_token {
+                signed.push(("x-amz-security-token", token.as_str()));
+            }
             let auth = authorization(
                 &self.access_key,
                 &self.secret_key,
                 &self.region,
                 method,
                 &path,
-                &[
-                    ("host", host.as_str()),
-                    ("x-amz-content-sha256", UNSIGNED_PAYLOAD),
-                    ("x-amz-date", amz_date.as_str()),
-                ],
+                &signed,
                 UNSIGNED_PAYLOAD,
             );
-            let headers = [
+            let mut headers = vec![
                 ("x-amz-content-sha256", UNSIGNED_PAYLOAD.to_string()),
-                ("x-amz-date", amz_date),
+                ("x-amz-date", amz_date.clone()),
                 ("authorization", auth),
             ];
+            if let Some(token) = &self.session_token {
+                headers.push(("x-amz-security-token", token.clone()));
+            }
             let result = send(&url, &headers);
             let retry = match &result {
                 Ok(resp) => {
@@ -296,6 +317,29 @@ impl S3 {
     }
 }
 
+impl S3 {
+    /// Like [`Store::upload`], but also sets the object's media type,
+    /// which the store returns as `Content-Type` when serving it.
+    pub fn upload_as(&self, key: &str, src: &Path, content_type: Option<&str>) -> Result<()> {
+        self.put_with(key, |mut r| {
+            if let Some(t) = content_type {
+                r = r.header("content-type", t);
+            }
+            let f = std::fs::File::open(src).map_err(ureq::Error::Io)?;
+            r.send(&f)
+        })
+    }
+
+    /// Where `key` goes, for log messages.
+    pub fn describe_key(&self, key: &str) -> String {
+        if self.prefix.is_empty() {
+            format!("s3://{}/{key}", self.bucket)
+        } else {
+            format!("s3://{}/{}/{key}", self.bucket, self.prefix)
+        }
+    }
+}
+
 type Response = ureq::http::Response<ureq::Body>;
 
 fn error_body(resp: Response) -> String {
@@ -340,10 +384,7 @@ impl Store for S3 {
     }
 
     fn upload(&self, key: &str, src: &Path) -> Result<()> {
-        self.put_with(key, |r| {
-            let f = std::fs::File::open(src).map_err(ureq::Error::Io)?;
-            r.send(&f)
-        })
+        self.upload_as(key, src, None)
     }
 
     fn describe(&self) -> String {
