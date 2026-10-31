@@ -509,19 +509,11 @@ mod tests {
         assert_eq!(o.departures, 10 * 3);
         assert_eq!(o.by_agency, [("Regio Bus".to_string(), 30)]);
 
-        // The median week sees the same: Monday to Friday dropped.
-        let monday = 4; // 1970-01-05
-        let shifted_regional = {
-            let mut r = regional.clone();
-            r.first_day = monday;
-            r.last_day = monday + 13;
-            r
-        };
-        let (week, dup) = shifted_regional
-            .median_week_without(None, &dropped[1])
-            .unwrap();
-        let i = week.trips.iter().position(|t| t.len == 3).unwrap();
-        assert_eq!(dup[i], 0b0011111);
+        // Without its duplicates, the regional feed loses the first
+        // trip's ten runs that the national feed has, at 3 stops each.
+        let all: u64 = regional.totals().values.iter().sum();
+        let without: u64 = regional.totals_without(&dropped[1]).values.iter().sum();
+        assert_eq!(all - without, 10 * 3);
     }
 
     #[test]

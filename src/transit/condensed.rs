@@ -241,24 +241,6 @@ impl Feed {
     /// The departures of the median week, as format 1 held them.
     /// Large arrays go to memory-mapped files in `scratch`, if given.
     pub fn median_week(&self, scratch: Option<&Path>) -> Result<gtfs::Condensed> {
-        Ok(self.median_week_without(scratch, &[])?.0)
-    }
-
-    /// Like [`median_week`](Self::median_week), and for each trip of
-    /// the median week the days on which it is a duplicate, by
-    /// `dropped`: trips as [`all_trips`](Self::all_trips) numbers them,
-    /// sorted, with the calendar days they are duplicates on.
-    ///
-    /// The other feed's calendar often covers other weeks than this
-    /// feed's median week, so a trip counts as a duplicate on every
-    /// weekday on which it was one on some date. This bridges the gap
-    /// until the signal is an average over the whole year, where each
-    /// date counts for itself.
-    pub fn median_week_without(
-        &self,
-        scratch: Option<&Path>,
-        dropped: &[(u32, Service)],
-    ) -> Result<(gtfs::Condensed, Vec<u8>)> {
         let mut c = gtfs::Condensed {
             first_day: self.first_day,
             last_day: self.last_day,
@@ -266,7 +248,7 @@ impl Feed {
             ..Default::default()
         };
         if self.days == 0 {
-            return Ok((c, Vec::new()));
+            return Ok(c);
         }
         c.week_start = gtfs::median_week(self.first_day, &self.trips_per_day());
         // Days of the median week that a service runs on.
@@ -282,17 +264,7 @@ impl Feed {
         };
         let days: Vec<u8> = self.services.iter().map(week).collect();
         let (mut trips, mut stops) = (Writer::new(scratch)?, Writer::new(scratch)?);
-        let mut duplicate = Vec::new();
-        let mut dropped = dropped.iter().peekable();
-        for (i, t) in self.all_trips().enumerate() {
-            let mut dup = 0u8;
-            while let Some((n, s)) = dropped.next_if(|(n, _)| *n as usize <= i) {
-                if *n as usize == i {
-                    for d in (0..self.days).filter(|&d| s.runs(d)) {
-                        dup |= 1 << gtfs::weekday(self.first_day + i64::from(d));
-                    }
-                }
-            }
+        for t in self.all_trips() {
             let d = days[t.service as usize];
             if d == 0 {
                 continue;
@@ -315,11 +287,10 @@ impl Feed {
                 start: first,
                 len: u32::try_from(p.stops.len())?,
             })?;
-            duplicate.push(dup & d);
         }
         c.trips = trips.finish()?;
         c.stops = stops.finish()?;
-        Ok((c, duplicate))
+        Ok(c)
     }
 
     /// Every trip, with frequency-based ones expanded to one per start
@@ -458,6 +429,46 @@ impl Feed {
         }
         self.trips.sort_unstable();
         self.frequencies.sort_unstable();
+    }
+
+    /// Like [`totals`](Self::totals), without the duplicates in
+    /// `dropped`: trips as [`all_trips`](Self::all_trips) numbers them,
+    /// sorted, with the calendar days they are duplicates on.
+    pub fn totals_without(&self, dropped: &[(u32, Service)]) -> Totals {
+        let mut t = self.totals();
+        if dropped.is_empty() {
+            return t;
+        }
+        let offset = self.first_weekday();
+        let mut dropped = dropped.iter().peekable();
+        for (i, trip) in self.all_trips().enumerate() {
+            let Some((_, days)) = dropped.next_if(|(n, _)| *n as usize == i) else {
+                if dropped.peek().is_none() {
+                    break;
+                }
+                continue;
+            };
+            let own = &self.services[trip.service as usize];
+            for d in (0..self.days).filter(|&d| days.runs(d) && own.runs(d)) {
+                let w = ((d + offset) / 7) as usize;
+                for s in &self.patterns[trip.pattern as usize].stops {
+                    let v = &mut t.values[s.station as usize * t.weeks + w];
+                    *v = v.saturating_sub(1);
+                }
+            }
+        }
+        t
+    }
+
+    /// Days of each week, as [`totals`](Self::totals) numbers the
+    /// weeks, that the calendar covers.
+    pub fn covered_days(&self) -> Vec<u8> {
+        let offset = self.first_weekday();
+        let mut out = vec![0u8; self.weeks()];
+        for d in 0..self.days {
+            out[((d + offset) / 7) as usize] += 1;
+        }
+        out
     }
 
     /// Departures at each station in each week the calendar touches.

@@ -276,9 +276,17 @@ fn counts_departures_through_cache() {
         "transit-departures.2026-06-15.tiff"
     );
     assert_eq!((s.feeds, s.stale, s.failed, s.expired), (2, 0, 0, 0));
-    // National: train 2×5, shuttle 96×7, bus 2×5; regional: bus 2×7.
-    assert_eq!(s.departures, 10 + 672 + 10 + 14);
-    assert_eq!(s.duplicates, 10, "the regional bus on weekdays");
+    // A week of the national feed: train 2×5, shuttle 96×7, bus 2×5;
+    // of the regional one: bus 2×7, of which the weekday runs are
+    // duplicates. The three weeks of June up to the run count.
+    let close = |a: f64, b: f64| (a - b).abs() < 0.01;
+    assert!(
+        close(s.departures, (10.0 + 672.0 + 10.0 + 14.0 - 10.0) / 7.0),
+        "{}",
+        s.departures
+    );
+    // Duplicates over the current timetable: 22 weekdays in June.
+    assert!(close(s.duplicates, 22.0 * 2.0 / 30.0), "{}", s.duplicates);
     let tiff = std::fs::read(&s.output).unwrap();
     let img = common::read(&tiff);
     let copyright = img.ifds[0][&33432].ascii();
@@ -303,7 +311,7 @@ fn counts_departures_through_cache() {
         report["feeds"][1]["url"],
         format!("{}/mirror/regional.zip", server.base)
     );
-    assert_eq!(report["feeds"][0]["median_week"], "2026-06-08");
+    assert_eq!(report["feeds"][0]["weeks"], 3);
     assert_eq!(report["duplicates"][0]["feed"], "ch/regional");
     assert_eq!(report["duplicates"][0]["also_in"], "ch/national");
     assert_eq!(
