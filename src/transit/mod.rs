@@ -724,10 +724,11 @@ fn average(
             history::History::new(day)
         }),
     };
-    let full = f.feed()?;
-    let all = full.totals();
-    let without = full.totals_without(dropped);
-    let duplicates: u64 = all.values.iter().sum::<u64>() - without.values.iter().sum::<u64>();
+    // The totals stored with the feed spare computing them again.
+    let (full, mut without) = f.feed_with_totals()?;
+    let all: u64 = without.values.iter().sum();
+    full.subtract(&mut without, dropped);
+    let duplicates = all - without.values.iter().sum::<u64>();
     let before = history.clone();
     history.update(&full, &without, day);
     if history != before {
