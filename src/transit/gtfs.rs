@@ -8,14 +8,9 @@
 //! station's. Each trip's departures become a pattern, which all trips
 //! with the same departures at the same spacing share.
 //!
-//! The rest of the pipeline still works on the departures of the
-//! median week, [`Condensed`], which [`condensed::Feed::median_week`]
-//! derives. A feed's calendar usually spans weeks to a year, with
-//! holidays and timetable changes. We count the trips that run on each
-//! day, split the days into weeks from Monday to Sunday, and pick the
-//! week whose total is the median. Holiday weeks and the thin tail at
-//! the end of a feed, where the next timetable is not yet published,
-//! fall out that way, and weekends stay in.
+//! [`Condensed`] and `median_week` are the departures of a feed's
+//! median week, which format 1 stored. The pipeline no longer uses
+//! them; tests still compare against them.
 
 use super::condensed;
 use crate::slab::{Record, Slab, Writer};
@@ -638,7 +633,7 @@ impl Exception {
     }
 }
 
-/// A stop time of a trip in the median week, while condensing.
+/// A stop time of a trip, while condensing.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Event {

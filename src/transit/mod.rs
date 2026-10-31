@@ -46,8 +46,8 @@ const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
     title: "Public transport departures",
     description: "How many public transport departures there are per day and km² \
         of Earth surface, for every zoom-18 Web Mercator tile, as a Cloud-Optimized \
-        GeoTIFF with overviews. Counted from GTFS feeds over each feed's median week, \
-        with trips that several feeds contain counted once. Pixel values encode \
+        GeoTIFF with overviews. Counted from GTFS feeds as the average day of the past \
+        12 months, with trips that several feeds contain counted once. Pixel values encode \
         log2(departures per day per km²); 0 means no departures.",
     grid: crate::cog::Grid::WEB_MERCATOR,
     nodata: None,

@@ -146,7 +146,8 @@ enum Command {
         #[arg(long, alias = "tmpdir", default_value_os_t = std::env::temp_dir())]
         workdir: PathBuf,
         /// Worker threads; defaults to the number of CPUs. Each condenses
-        /// one feed at a time, which takes up to about 250 MB of memory.
+        /// one feed at a time, which takes up to about 350 MB of memory, plus
+        /// the feed's stop times in memory-mapped scratch files.
         #[arg(long)]
         threads: Option<usize>,
         /// The day of the output, as YYYY-MM-DD; defaults to today (UTC).
