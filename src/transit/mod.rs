@@ -139,16 +139,10 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     let timestamp = day * 86_400;
 
     let store = crate::store::open(&cfg.cache)?;
-    let fetcher = Fetcher {
-        store: store.as_ref(),
-        agent: crate::http::agent(),
-        tmp: workdir.tmp(),
-        offline: cfg.offline,
-        now: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs() as i64,
-        retry_delay: cfg.retry_delay,
-    };
+    let mut fetcher = Fetcher::new(store.as_ref(), workdir.tmp());
+    fetcher.offline = cfg.offline;
+    fetcher.retry_delay = cfg.retry_delay;
+    fetcher.index = fetch::read_index(fetcher.store);
     let mut inputs = Vec::new();
     let mut catalogs = Catalogs::default();
     let (transitous, input) = read_catalog(&fetcher, "transitous", &cfg.transitous)?;
@@ -214,6 +208,14 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         selected.len(),
         start.elapsed()
     );
+    fetch::write_index(
+        fetcher.store,
+        &fetcher.index,
+        selected
+            .iter()
+            .zip(&results)
+            .filter_map(|(feed, r)| Some((feed.id.as_str(), &r.as_ref().ok()?.meta))),
+    )?;
 
     let mut summary = Summary::default();
     let mut report_feeds = Vec::new();
@@ -365,26 +367,26 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     let mut sources: Vec<crate::bom::Source> = inputs.iter().map(|i| i.bom_source()).collect();
     for (feed, f) in &used {
         sources.push(crate::bom::Source {
-            name: fetch::key_prefix(&feed.id),
+            name: format!("gtfs/{}", fetch::safe_id(&feed.id)),
             version: f.meta.fetched,
             url: Some(public_url(feed, &f.meta)).filter(|u| !u.is_empty()),
             license_id: feed.license.spdx.clone(),
             license_url: feed.license.url.clone(),
             copyright: feed.license.attribution.clone(),
             sha256: Some(f.meta.sha256.clone()),
-            sha512: f.meta.sha512.clone(),
+            sha512: Some(f.meta.sha512.clone()),
             evidence: feed.license.evidence.clone(),
         });
         if let (Some(st), Some(meta)) = (&feed.stations, &f.stations) {
             sources.push(crate::bom::Source {
-                name: format!("{}/stations", fetch::key_prefix(&feed.id)),
+                name: format!("gtfs/{}/stations", fetch::safe_id(&feed.id)),
                 version: meta.fetched,
                 url: Some(st.url.clone()),
                 license_id: st.license.spdx.clone(),
                 license_url: st.license.url.clone(),
                 copyright: st.license.attribution.clone(),
                 sha256: Some(meta.sha256.clone()),
-                sha512: meta.sha512.clone(),
+                sha512: Some(meta.sha512.clone()),
                 evidence: None,
             });
         }
@@ -503,7 +505,7 @@ impl CatalogInput {
             license_url,
             copyright: copyright.map(str::to_string),
             sha256: self.fetched.as_ref().map(|(m, _)| m.sha256.clone()),
-            sha512: self.fetched.as_ref().and_then(|(m, _)| m.sha512.clone()),
+            sha512: self.fetched.as_ref().map(|(m, _)| m.sha512.clone()),
             evidence: None,
         }
     }
@@ -559,7 +561,7 @@ fn read_catalog(
     let path = if location.starts_with("https://") || location.starts_with("http://") {
         let file = if csv { "feeds.csv" } else { "archive.tar.gz" };
         let path = fetcher.tmp.join(format!("catalog-{name}-{file}"));
-        let prefix = format!("catalogs/{name}");
+        let prefix = fetch::shared_prefix(name);
         let urls = [location.to_string()];
         let src = fetch::Source {
             prefix: &prefix,

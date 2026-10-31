@@ -392,39 +392,81 @@ fn counts_departures_through_cache() {
     );
     assert_eq!(std::fs::read(&s2.output).unwrap(), tiff);
 
-    // A cache from before SHA-512: meta.json lacks it, and so does the
-    // condensed header. The next run, even with the server down, fills
-    // in both from the cached download.
-    let feed_dir = dir.path().join("cache/gtfs/ch/national");
-    let meta_path = feed_dir.join("meta.json");
-    let mut meta: Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
-    meta.as_object_mut().unwrap().remove("sha512");
-    std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
-    let condensed_path = std::fs::read_dir(&feed_dir)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| {
-            p.file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("condensed-")
-        })
-        .unwrap();
-    let mut feed = condensed::Feed::decode(&std::fs::read(&condensed_path).unwrap()).unwrap();
-    assert_eq!(hex(&feed.inputs[0].sha512), national_sha512);
-    feed.inputs[0].sha512.clear();
-    std::fs::write(&condensed_path, feed.encode().unwrap()).unwrap();
+    // The cache holds one object per fixed key, and no meta.json.
+    let cache = dir.path().join("cache");
+    let mut keys = Vec::new();
+    let mut todo = vec![cache.clone()];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                todo.push(p);
+            } else {
+                keys.push(
+                    p.strip_prefix(&cache)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_string(),
+                );
+            }
+        }
+    }
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "transit/ch/national/condensed.bin",
+            "transit/ch/national/gtfs.zip",
+            "transit/ch/national/history.bin",
+            "transit/ch/regional/condensed.bin",
+            "transit/ch/regional/gtfs.zip",
+            "transit/ch/regional/history.bin",
+            "transit/index.json",
+            "transit/shared/transitous/archive.tar.gz",
+            "transit/shared/transitous/transitous.json",
+        ]
+    );
+    let condensed_path = cache.join("transit/ch/national/condensed.bin");
+    let feed = condensed::Feed::decode(&std::fs::read(&condensed_path).unwrap()).unwrap();
+    let input = &feed.inputs[0];
+    assert_eq!(input.final_url, format!("{}/national.zip", server.base));
+    assert_eq!(
+        input.etag.as_deref(),
+        Some(format!("\"{}\"", national().len()).as_str())
+    );
+    assert_eq!(input.bytes, national().len() as u64);
+    assert_eq!(hex(&input.sha512), national_sha512);
+    let index_path = cache.join("transit/index.json");
+    let mut index: Value = serde_json::from_slice(&std::fs::read(&index_path).unwrap()).unwrap();
+    assert_eq!(index["feeds"]["ch/national"]["sha512"], national_sha512);
+    assert_eq!(
+        index["feeds"]["ch/national"]["etag"],
+        input.etag.clone().unwrap()
+    );
+
+    // The index is only a hint. Where it disagrees with the header, the
+    // run asks again with what the header says.
+    index["feeds"]["ch/national"]["sha256"] = "00".repeat(32).into();
+    std::fs::write(&index_path, serde_json::to_vec(&index).unwrap()).unwrap();
+    let s3 = transit::run(&cfg).unwrap();
+    assert_eq!(server.not_modified.load(Ordering::SeqCst), 3 + 4);
+    assert_eq!((s3.feeds, s3.stale), (2, 0));
+    assert_eq!(std::fs::read(&s3.output).unwrap(), tiff);
+    let index: Value = serde_json::from_slice(&std::fs::read(&index_path).unwrap()).unwrap();
+    assert_eq!(
+        index["feeds"]["ch/national"]["sha256"],
+        sha256_hex(&national())
+    );
+
+    // Without an index, the headers say what is cached.
+    std::fs::remove_file(&index_path).unwrap();
 
     // Third run: the server is down, so the cached copies are used.
     server.down.store(true, Ordering::SeqCst);
     let s3 = transit::run(&cfg).unwrap();
     assert_eq!((s3.feeds, s3.stale), (2, 2));
     assert_eq!(std::fs::read(&s3.output).unwrap(), tiff);
-    let meta: Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
-    assert_eq!(meta["sha512"], national_sha512);
-    let feed = condensed::Feed::decode(&std::fs::read(&condensed_path).unwrap()).unwrap();
-    assert_eq!(hex(&feed.inputs[0].sha512), national_sha512);
     let bom: Value = serde_json::from_slice(&std::fs::read(&s3.bom).unwrap()).unwrap();
     assert_eq!(
         bom["components"][2]["hashes"][1]["content"],
@@ -579,14 +621,9 @@ fn fetches_cif_with_login() {
     let store = geosignals::store::open(dir.path().join("cache").to_str().unwrap()).unwrap();
     let tmp = dir.path().join("tmp");
     std::fs::create_dir_all(&tmp).unwrap();
-    let fetcher = Fetcher {
-        store: store.as_ref(),
-        agent: geosignals::http::agent(),
-        tmp: &tmp,
-        offline: false,
-        now: geosignals::date::days_from_civil(2026, 6, 15) * 86_400,
-        retry_delay: std::time::Duration::from_millis(1),
-    };
+    let mut fetcher = Fetcher::new(store.as_ref(), &tmp);
+    fetcher.now = geosignals::date::days_from_civil(2026, 6, 15) * 86_400;
+    fetcher.retry_delay = std::time::Duration::from_millis(1);
     // SAFETY: no other test reads or writes this variable.
     unsafe {
         std::env::set_var("GEOSIGNALS_TEST_CIF_USERNAME", "user");
@@ -607,6 +644,15 @@ fn fetches_cif_with_login() {
     assert_eq!(f.status, Status::Changed);
     assert_eq!(f.meta.url, format!("{base}/cif"));
     assert!(f.stations.is_some());
+    let cache = dir.path().join("cache/transit");
+    for key in [
+        "gb/networkrail/condensed.bin",
+        "gb/networkrail/cif.gz",
+        "shared/naptan/naptan.csv",
+        "shared/naptan/naptan.json",
+    ] {
+        assert!(cache.join(key).is_file(), "{key} is not cached");
+    }
     let c = &f.feed().unwrap().median_week(None).unwrap();
     assert_eq!(c.week_start, geosignals::date::days_from_civil(2026, 6, 8));
     assert_eq!(c.departures_per_week(), 2 * 5);

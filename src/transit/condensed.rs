@@ -25,6 +25,11 @@
 //! weekly totals, stations, patterns, trips, frequencies, services. A
 //! run that only needs the inputs' ETags, or the departures per station
 //! and week, reads the first one or two frames and stops.
+//!
+//! The header records each input file: its URL and where that
+//! redirected to, `ETag`, `Last-Modified`, SHA-256, SHA-512, size, and
+//! when we first downloaded it. It is the cache's record of the feed;
+//! see [`super::fetch`].
 
 use super::gtfs;
 use crate::slab::Writer;
@@ -58,11 +63,15 @@ const MAX_FIELD: usize = 1 << 16;
 /// A downloaded file the feed was condensed from.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Input {
+    /// The URL we asked for.
     pub url: String,
+    /// Where that redirected to.
+    pub final_url: String,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub sha256: [u8; 32],
     pub sha512: Vec<u8>,
+    pub bytes: u64,
     /// When we first downloaded this content, in seconds since 1970.
     pub first_seen: i64,
 }
@@ -542,10 +551,12 @@ impl Feed {
         put_varint(&mut b, self.inputs.len() as u64);
         for i in &self.inputs {
             put_str(&mut b, &i.url);
+            put_str(&mut b, &i.final_url);
             put_str(&mut b, i.etag.as_deref().unwrap_or(""));
             put_str(&mut b, i.last_modified.as_deref().unwrap_or(""));
             b.extend_from_slice(&i.sha256);
             put_bytes(&mut b, &i.sha512);
+            put_varint(&mut b, i.bytes);
             put_signed(&mut b, i.first_seen);
         }
         put_varint(&mut b, self.agencies.len() as u64);
@@ -677,26 +688,7 @@ impl Feed {
         let mut r = Sections::new(data)?;
         let mut f = Feed::default();
         r.next(|r| {
-            f.condenser = u32::try_from(r.varint()?)?;
-            f.first_day = r.signed()?;
-            f.days = u32::try_from(r.varint()?)?;
-            f.last_day = r.signed()?;
-            for _ in 0..r.varint()? {
-                let url = r.string()?;
-                let etag = Some(r.string()?).filter(|s| !s.is_empty());
-                let last_modified = Some(r.string()?).filter(|s| !s.is_empty());
-                let sha256 = r.bytes(32)?.try_into().unwrap();
-                let len = r.len()?;
-                let sha512 = r.bytes(len)?;
-                f.inputs.push(Input {
-                    url,
-                    etag,
-                    last_modified,
-                    sha256,
-                    sha512,
-                    first_seen: r.signed()?,
-                });
-            }
+            read_header(r, &mut f)?;
             for _ in 0..r.varint()? {
                 f.agencies.push(r.string()?);
             }
@@ -816,6 +808,43 @@ impl Feed {
         );
         Ok(f)
     }
+}
+
+/// Reads only the condenser version and the inputs of an encoded
+/// feed, which is all a run needs to tell whether the file is current.
+pub fn decode_inputs(data: &[u8]) -> Result<(u32, Vec<Input>)> {
+    let mut r = Sections::new(data)?;
+    let mut f = Feed::default();
+    r.next_partial(|r| read_header(r, &mut f))?;
+    Ok((f.condenser, f.inputs))
+}
+
+/// Reads the start of the header, up to and including the inputs.
+fn read_header(r: &mut Reader, f: &mut Feed) -> Result<()> {
+    f.condenser = u32::try_from(r.varint()?)?;
+    f.first_day = r.signed()?;
+    f.days = u32::try_from(r.varint()?)?;
+    f.last_day = r.signed()?;
+    for _ in 0..r.varint()? {
+        let url = r.string()?;
+        let final_url = r.string()?;
+        let etag = Some(r.string()?).filter(|s| !s.is_empty());
+        let last_modified = Some(r.string()?).filter(|s| !s.is_empty());
+        let sha256 = r.bytes(32)?.try_into().unwrap();
+        let len = r.len()?;
+        let sha512 = r.bytes(len)?;
+        f.inputs.push(Input {
+            url,
+            final_url,
+            etag,
+            last_modified,
+            sha256,
+            sha512,
+            bytes: r.varint()?,
+            first_seen: r.signed()?,
+        });
+    }
+    Ok(())
 }
 
 /// Reads only the header and the weekly totals of an encoded feed.
@@ -1018,10 +1047,12 @@ mod tests {
             condenser: 7,
             inputs: vec![Input {
                 url: "https://example.org/gtfs.zip".into(),
+                final_url: "https://cdn.example.org/gtfs.zip".into(),
                 etag: Some("\"abc\"".into()),
                 last_modified: None,
                 sha256: [1; 32],
                 sha512: vec![2; 64],
+                bytes: 12345,
                 first_seen: 1_790_000_000,
             }],
             // 2026-06-03, a Wednesday.
@@ -1149,6 +1180,7 @@ mod tests {
         let f = sample();
         let data = f.encode().unwrap();
         assert_eq!(Feed::decode(&data).unwrap(), f);
+        assert_eq!(decode_inputs(&data).unwrap(), (7, f.inputs.clone()));
     }
 
     #[test]
