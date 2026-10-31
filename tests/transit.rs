@@ -288,6 +288,7 @@ fn counts_departures_through_cache() {
         "transit-departures.2026-06-15.tiff"
     );
     assert_eq!((s.feeds, s.stale, s.failed, s.expired), (2, 0, 0, 0));
+    assert_eq!((s.changed, s.unchanged, s.condensed), (2, 0, 2));
     // A week of the national feed: train 2×5, shuttle 96×7, bus 2×5;
     // of the regional one: bus 2×7, of which the weekday runs are
     // duplicates. The three weeks of June up to the run count.
@@ -382,6 +383,7 @@ fn counts_departures_through_cache() {
     // Second run: the server says nothing changed.
     let s2 = transit::run(&cfg).unwrap();
     assert_eq!(server.not_modified.load(Ordering::SeqCst), 3);
+    assert_eq!((s2.changed, s2.unchanged, s2.condensed), (0, 2, 0));
     let report: Value = serde_json::from_slice(&std::fs::read(&s2.report).unwrap()).unwrap();
     assert_eq!(
         statuses(&report),
@@ -466,6 +468,7 @@ fn counts_departures_through_cache() {
     server.down.store(true, Ordering::SeqCst);
     let s3 = transit::run(&cfg).unwrap();
     assert_eq!((s3.feeds, s3.stale), (2, 2));
+    assert_eq!((s3.changed, s3.unchanged, s3.condensed), (0, 0, 0));
     assert_eq!(std::fs::read(&s3.output).unwrap(), tiff);
     let bom: Value = serde_json::from_slice(&std::fs::read(&s3.bom).unwrap()).unwrap();
     assert_eq!(

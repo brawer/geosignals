@@ -240,7 +240,11 @@ impl S3 {
             if !retry || attempt >= S3_ATTEMPTS {
                 return result.with_context(|| format!("{method} {url}"));
             }
-            eprintln!("{method} {url} failed, retrying in {backoff:?}");
+            let why = match &result {
+                Ok(resp) => resp.status().to_string(),
+                Err(e) => e.to_string(),
+            };
+            eprintln!("{method} {url}: {why}; retrying in {backoff:?}");
             std::thread::sleep(backoff);
             backoff *= 2;
             attempt += 1;

@@ -121,6 +121,13 @@ pub struct Summary {
     /// Feeds without any data, and feeds whose service has ended.
     pub failed: usize,
     pub expired: usize,
+    /// Feeds whose publisher sent a new version, and feeds whose
+    /// publisher confirmed the cached copy, in or out of the output.
+    pub changed: usize,
+    pub unchanged: usize,
+    /// Feeds condensed in this run, rather than taken condensed from
+    /// the cache.
+    pub condensed: usize,
     /// Departures on an average day of the past 12 months, without
     /// duplicates, summed over the feeds.
     pub departures: f64,
@@ -202,12 +209,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         cfg.cache
     );
 
-    let results = fetch_all(&fetcher, &selected, cfg.threads);
-    eprintln!(
-        "fetched {} feeds in {:.0?}",
-        selected.len(),
-        start.elapsed()
-    );
+    let results = fetch_all(&fetcher, &selected, cfg.threads, start);
     fetch::write_index(
         fetcher.store,
         &fetcher.index,
@@ -220,6 +222,15 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     let mut summary = Summary::default();
     let mut report_feeds = Vec::new();
     let mut used: Vec<(&Feed, Fetched)> = Vec::new();
+    let mut from_cache_after_error = 0;
+    for f in results.iter().flatten() {
+        match f.status {
+            Status::Changed => summary.changed += 1,
+            Status::Unchanged => summary.unchanged += 1,
+            Status::Stale { .. } => from_cache_after_error += 1,
+        }
+        summary.condensed += usize::from(f.condensed);
+    }
     for (feed, result) in selected.iter().zip(results) {
         match result {
             Err(e) => {
@@ -238,6 +249,20 @@ pub fn run(cfg: &Config) -> Result<Summary> {
             Ok(f) => used.push((feed, f)),
         }
     }
+    eprintln!(
+        "fetched {} feeds in {:.0?}: {} changed, {} unchanged, {} from the cache after an error, \
+         {} failed; condensed {}, reused {} from the cache; {} expired, {} to use",
+        selected.len(),
+        start.elapsed(),
+        summary.changed,
+        summary.unchanged,
+        from_cache_after_error,
+        summary.failed,
+        summary.condensed,
+        selected.len() - summary.failed - summary.condensed,
+        summary.expired,
+        used.len()
+    );
     ensure!(!used.is_empty(), "no feed could be read");
 
     let outlines: Vec<&dedup::Outline> = used.iter().map(|(_, f)| &f.outline).collect();
@@ -614,7 +639,12 @@ fn read_catalog(
 }
 
 /// Fetches all feeds on `threads` threads; results are in feed order.
-fn fetch_all(fetcher: &Fetcher, feeds: &[Feed], threads: usize) -> Vec<Result<Fetched>> {
+fn fetch_all(
+    fetcher: &Fetcher,
+    feeds: &[Feed],
+    threads: usize,
+    start: Instant,
+) -> Vec<Result<Fetched>> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let done = std::sync::atomic::AtomicUsize::new(0);
     let mut results: Vec<(usize, Result<Fetched>)> = std::thread::scope(|s| {
@@ -638,7 +668,11 @@ fn fetch_all(fetcher: &Fetcher, feeds: &[Feed], threads: usize) -> Vec<Result<Fe
                         }
                         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         if n.is_multiple_of(100) {
-                            eprintln!("fetched {n} of {} feeds", feeds.len());
+                            eprintln!(
+                                "fetched {n} of {} feeds, {:.0?}",
+                                feeds.len(),
+                                start.elapsed()
+                            );
                         }
                         out.push((i, result));
                     }
