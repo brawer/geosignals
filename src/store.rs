@@ -10,10 +10,11 @@
 //! not changed.
 //!
 //! `--cache s3://bucket/prefix` talks to S3 with path-style URLs and
-//! AWS Signature Version 4, configured from the usual environment
-//! variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
-//! `AWS_REGION` (default `auto`, which Cloudflare R2 and others accept)
-//! and `AWS_ENDPOINT_URL` (default AWS for the region). Payloads are
+//! AWS Signature Version 4, configured from environment variables:
+//! `CACHE_S3_ACCESS_KEY_ID`, `CACHE_S3_SECRET_ACCESS_KEY`,
+//! `CACHE_S3_REGION` (default `auto`, which Cloudflare R2 and others
+//! accept) and `CACHE_S3_ENDPOINT_URL` (default Amazon S3 for the
+//! region). The standard `AWS_*` variables are ignored. Payloads are
 //! sent unsigned, so uploads stream from disk without being read twice.
 //! Anything else is a local directory.
 
@@ -46,7 +47,7 @@ pub fn open(location: &str) -> Result<Box<dyn Store>> {
     if let Some(rest) = location.strip_prefix("s3://") {
         let (bucket, prefix) = rest.split_once('/').unwrap_or((rest, ""));
         ensure!(!bucket.is_empty(), "no bucket in {location}");
-        return Ok(Box::new(S3::from_env(bucket, prefix)?));
+        return Ok(Box::new(S3::from_env("CACHE_S3_", bucket, prefix)?));
     }
     Ok(Box::new(LocalDir::new(location)?))
 }
@@ -145,17 +146,21 @@ pub struct S3 {
 const S3_ATTEMPTS: u32 = 5;
 
 impl S3 {
-    pub fn from_env(bucket: &str, prefix: &str) -> Result<S3> {
-        let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-        let region = var("AWS_REGION")
-            .or_else(|| var("AWS_DEFAULT_REGION"))
-            .unwrap_or_else(|| "auto".into());
-        let endpoint = var("AWS_ENDPOINT_URL_S3")
-            .or_else(|| var("AWS_ENDPOINT_URL"))
-            .unwrap_or_else(|| format!("https://s3.{region}.amazonaws.com"));
-        let access_key = var("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID is not set")?;
-        let secret_key =
-            var("AWS_SECRET_ACCESS_KEY").context("AWS_SECRET_ACCESS_KEY is not set")?;
+    /// Reads the credentials from environment variables whose names
+    /// start with `env_prefix`, such as `CACHE_S3_ACCESS_KEY_ID`.
+    pub fn from_env(env_prefix: &str, bucket: &str, prefix: &str) -> Result<S3> {
+        let var = |name: &str| {
+            let name = format!("{env_prefix}{name}");
+            match std::env::var(&name) {
+                Ok(v) if !v.is_empty() => Ok(v),
+                _ => Err(name),
+            }
+        };
+        let region = var("REGION").unwrap_or_else(|_| "auto".into());
+        let endpoint =
+            var("ENDPOINT_URL").unwrap_or_else(|_| format!("https://s3.{region}.amazonaws.com"));
+        let access_key = var("ACCESS_KEY_ID").map_err(|n| anyhow::anyhow!("{n} is not set"))?;
+        let secret_key = var("SECRET_ACCESS_KEY").map_err(|n| anyhow::anyhow!("{n} is not set"))?;
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(30)))
