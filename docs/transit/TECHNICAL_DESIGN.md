@@ -781,8 +781,34 @@ Moving to format 2 taught us:
 
 ## Open issues
 
-- **Cache layout.** `meta.json` duplicates what the condensed header
-  records. A planned move to a `transit/` prefix would drop it.
+- **Cache layout.** Today a feed's `meta.json` is how a run finds
+  everything else: the condensed key contains the feed's hash, and
+  the store cannot list keys. The planned layout drops it by giving
+  every object a fixed key under one `transit/` prefix, so other
+  signals can share the cache under their own prefixes:
+
+  ```
+  transit/<feed id>/condensed.bin              format version, URL, final URL, ETag, Last-Modified, hashes in its header
+  transit/<feed id>/gtfs.zip                   or cif.gz: the last download, as is
+  transit/<feed id>/history.bin                weekly departures per pixel
+  transit/shared/<name>/<file>                 NaPTAN and each catalog, fetched once per run
+  transit/shared/<name>/<name>.json            its URL, ETag, Last-Modified and hashes
+  transit/index.json                           written at the end of a run
+  ```
+
+  The header becomes the source of truth for a feed, and an outdated
+  `condensed.bin` is rebuilt in place. A CIF header records the hash
+  of the NaPTAN file it used, so a new NaPTAN triggers a rebuild.
+  Shared inputs have no condensed file, so they keep a small sidecar
+  JSON, the same in S3 and in a local directory.
+
+  `index.json` lists every feed's ETag, Last-Modified, hashes and
+  format version. The next run makes its conditional requests from
+  it, so it never loads the stale `condensed.bin` of a feed that
+  changed. It is only a hint: if it is missing or out of date, say
+  after a crash, the run falls back to each file's header. The gain is
+  modest, since unchanged feeds are read in full for the raster
+  anyway, but there are thousands of feeds.
 - **Decoding twice.** A warm run decodes each feed for dedup and
   again for the history. Keeping the weekly totals from the first pass
   would halve that.
