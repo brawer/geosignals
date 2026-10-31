@@ -29,6 +29,7 @@ which are among the largest anywhere. The code lives in
 - [The 12-month average](#the-12-month-average)
 - [The raster](#the-raster)
 - [Parallelism](#parallelism)
+- [Running the pipeline](#running-the-pipeline)
 - [Measurements](#measurements)
 - [Scaling to the planet](#scaling-to-the-planet)
 - [Sketch: spreading departures to walking distance](#sketch-spreading-departures-to-walking-distance)
@@ -266,10 +267,22 @@ the permanent one.
 
 The condenser resolves this up front. For each schedule, its service
 is the set of days on which it is the winner. The output is an
-ordinary condensed feed, so no later step knows about CIF. Each TIPLOC
-becomes a station, placed through NaPTAN. Since that placement depends
-on the NaPTAN file too, the cache key includes the hashes of both
-inputs.
+ordinary condensed feed, so no later step knows about CIF.
+
+- **Departures.** A calling point counts if its activity is `TB`
+  (train begins), `T` (stops), `U` (stops to pick up) or `R` (request
+  stop), and not `N` (not advertised).
+- **Times.** The public departure time is used, or the working time
+  where the public one is missing.
+- **Stations.** Each TIPLOC becomes a station. NaPTAN gives a railway
+  station's position under the ATCO code `9100` plus its TIPLOC. Big
+  stations have several TIPLOCs, so a TIPLOC that NaPTAN lacks takes
+  the position of another with the same CRS (three-letter) code.
+  Departures at TIPLOCs with neither are dropped, and the log names
+  them.
+
+Since the placement depends on the NaPTAN file too, the cache key
+includes the hashes of both inputs.
 
 ## Fetching and the cache
 
@@ -569,6 +582,41 @@ sorted back into feed order, so output doesn't depend on scheduling.
   computes totals, and reads and writes its history.
 - **Raster:** tiles are compressed on workers, connected by bounded
   channels, and a collector writes them in order.
+
+## Running the pipeline
+
+The basic command and the main flags are in the [user
+documentation](README.md#reproducing-the-files). This section covers
+what matters for operating it.
+
+- **Catalogs.** By default, Transitous and the Transitland Atlas are
+  downloaded as the tarballs that GitHub serves for their `main`
+  branch, and the Mobility Database as its CSV export. They are cached
+  like feeds. `--transitous` and `--transitland-atlas` also take a
+  local tarball or checkout, and `--mobility-database` a local CSV
+  file. `none` skips the sources that need the Atlas or the Mobility
+  Database.
+- **Logins.** A feed in `checked.json` with `credentials` needs our own
+  login, set as `<PREFIX>_USERNAME` and `<PREFIX>_PASSWORD`, such as
+  `NETWORK_RAIL_USERNAME`. The password goes only to the feed's URL,
+  not to where that redirects. The BOM records the URL we asked for,
+  not the signed URL it redirected to. Without the variables, the feed
+  is skipped, except with `--offline`.
+- **Cache.** `--cache` is a directory or `s3://bucket/prefix`,
+  configured with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `AWS_REGION` and `AWS_ENDPOINT_URL`. `--offline` uses only the cache.
+  A cached feed is used however old, as long as its timetable ended at
+  most `--max-expired-days` (default 90) before `--date`.
+- **Scratch disk.** `--workdir` holds downloads in progress, the stop
+  times of the feeds being condensed (16 bytes each), and the
+  condensed feeds of the run (about a GB planet-wide). It must be on
+  disk, not on a RAM disk (see
+  [Memory](#memory-mmap-instead-of-heap)).
+- **Threads and memory.** `--threads` sets how many feeds are fetched
+  and condensed at once, and so bounds memory. Each large feed takes up
+  to about 350 MB of heap while it is condensed (see
+  [Measurements](#measurements)). A planet-wide run should fit on a
+  2 GB machine with 2–4 threads.
 
 ## Measurements
 

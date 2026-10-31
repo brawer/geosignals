@@ -132,38 +132,27 @@ week.
   to 20:00" in `frequencies.txt` are expanded into one trip per start
   time.
 - **All modes.** All modes count the same: a bus, a tram, a ferry and
-  a 400 m long train are one departure each. The files don't hold
-  `route_type`, so modes can't be told apart.
+  a 400 m long train are one departure each. The output doesn't tell
+  modes apart.
 
 ### Timetables in CIF
 
-Network Rail publishes its timetable in CIF, a file of fixed-width
-records. A train is a basic schedule, which says from when to when and
-on which weekdays it runs, followed by its calling points. Several
-schedules can share a train's ID: on any one day a cancellation beats
-a new short-term schedule, which beats an overlay, which beats the
-permanent schedule.
+Network Rail's timetable for Great Britain comes in CIF rather than
+GTFS. It counts the same way, with a few differences:
 
-- **Departures.** A calling point counts if passengers may board
-  there: the train begins or stops there, picks up, or stops on
-  request. Points where it only sets down, isn't advertised, or passes
-  without stopping don't count, nor does its terminus. Freight and
-  empty trains have no public calls and count nothing.
-- **Times.** We use the public departure time, or the working time
-  where the public one is missing. Like GTFS times, they are local and
-  run on past midnight within a train.
+- **Departures.** A train's stop counts if passengers may board there.
+  Stops where it only sets down, isn't advertised, or passes without
+  stopping don't count, nor does its terminus. Freight and empty trains
+  count nothing. Where several versions of a train's schedule apply on
+  a day, such as a cancellation or a short-term change, only the one in
+  force counts.
 - **Bank holidays.** The flag that says whether a train runs on bank
   holidays is ignored.
-- **Stations.** CIF names places by TIPLOC and has no coordinates. We
-  place each TIPLOC by its railway station in
-  [NaPTAN](https://www.gov.uk/government/publications/national-public-transport-access-node-schema),
-  where a station's ATCO code is `9100` plus its TIPLOC. Big stations
-  have several TIPLOCs, so a TIPLOC that NaPTAN lacks takes the
-  position of another with the same three-letter station code. The
-  run log names the TIPLOCs that remain unplaced; their departures are
-  dropped.
-- **Modes.** Trains, buses and ships are kept apart in the condensed
-  form, but as for GTFS the output doesn't distinguish them.
+- **Stations.** CIF has no coordinates. Stations are placed by their
+  entry in
+  [NaPTAN](https://www.gov.uk/government/publications/national-public-transport-access-node-schema).
+  Departures at the few stations that NaPTAN lacks are dropped, and
+  the run log names them.
 
 ### The 12-month average
 
@@ -174,13 +163,8 @@ third of its winter rate, and a summer ferry likewise. Holidays,
 school breaks and timetable changes count with their real weight.
 
 Many feeds publish only the next few weeks, so the year is collected
-run by run. For each feed, the cache keeps a history: the departures
-per pixel in each week (Monday to Sunday), after removing duplicates,
-and how many days of the week a timetable covered. A run adds the
-weeks of the feed's current timetable; where it covers at least as
-many days of a week as an earlier one, it replaces it.
-
-Which weeks count:
+run by run, week by week (Monday to Sunday). Where a newer timetable
+covers a week, it replaces the older one. Which weeks count:
 
 - a week some timetable covered, with the days it covered;
 - a week since we first tracked the feed that no timetable covered,
@@ -209,10 +193,7 @@ duplicate on that date. The copy in the largest feed survives.
 
 Comparing dates keeps a summer timetable from matching a winter one,
 and a holiday from matching a normal day. Feeds whose calendars share
-no day are not compared. For a pair, we look only at the larger
-feed's stations near the smaller feed, and at the trips through
-them, so comparing a local feed with a national one costs about as
-much as the local feed.
+no day are not compared, since no day has both copies.
 
 In the test run:
 
@@ -397,57 +378,20 @@ cargo run --release -- transit-departures \
   --cache s3://my-bucket/geosignals --output-dir transit
 ```
 
-`--date 2026-10-26` names the run's day; it defaults to today (UTC).
-`--only ch/` restricts a run to some regions, and may be given several
-times. See [Running geosignals](../running.md) for the container, the data
-BOM, `datapackage.json` and scratch space.
+- `--date 2026-10-26` names the run's day. It defaults to today (UTC).
+- `--only ch/` restricts a run to some regions, and may be given
+  several times.
+- `--licenses any` uses all feeds, regardless of license. Its output
+  is for internal use only (see [Licenses and
+  attribution](#licenses-and-attribution)).
+- Network Rail's feed needs `NETWORK_RAIL_USERNAME` and
+  `NETWORK_RAIL_PASSWORD`. Without them, it is skipped.
 
-**Catalogs.** Transitous and the Transitland Atlas are downloaded as
-the tarballs GitHub serves for their `main` branch, and the Mobility
-Database as its CSV export. They are cached like feeds, under
-`catalogs/<name>/`, so an outage at GitHub falls back to the last copy.
-`--transitous` and `--transitland-atlas` also take a local tarball or
-checkout, and `--mobility-database` a local CSV file; `none` skips the
-sources that need the Atlas or the Mobility Database.
-
-**Logins.** A feed in `checked.json` with `credentials` needs our own
-login, set as `<PREFIX>_USERNAME` and `<PREFIX>_PASSWORD`, such as
-`NETWORK_RAIL_USERNAME` and `NETWORK_RAIL_PASSWORD`. The password goes
-only to the feed's URL, not to where that redirects, and the BOM
-records the URL we asked for, not the signed URL it redirected to.
-Without the variables, the feed is skipped, except with `--offline`.
-
-**Licenses.** `--licenses open` (the default) uses only feeds under a
-license we may republish, as described in [Licenses and
-attribution](#licenses-and-attribution). `--licenses any` uses all
-feeds, for internal use only.
-
-**Cache.** `--cache` is a directory or an S3-compatible bucket
-(`s3://bucket/prefix`, configured with `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and `AWS_ENDPOINT_URL`). For each
-feed it keeps the last download, its `ETag`, `Last-Modified` and
-SHA-256, a condensed copy with its whole calendar (stations, trip
-patterns, trips and the days each service runs), and its weekly
-history for the 12-month average. A run asks each
-publisher whether the feed changed (`If-None-Match`,
-`If-Modified-Since`), retries network errors, tries mirrors such as
-MobilityData's daily copy, and if all fail uses the cached copy,
-however old, as long as its timetable ended at most
-`--max-expired-days` (90) before `--date`. `--offline` uses only the
-cache. The Swiss and German national feeds (169 and 242 MB) condense
-to 3.7 and 8.9 MB; a planet-wide cache should need some 20–40 GB of raw
-feeds plus about a GB of condensed ones.
-
-**Memory.** The condensed feeds live in memory-mapped scratch files
-in `--workdir`, so the kernel pages them in and out as needed; put
-`--workdir` on disk, not on a RAM disk. Condensing a feed needs 16
-bytes of scratch disk per stop time, also memory-mapped, plus its
-tables on the heap. On the Swiss and German national feeds, among the
-largest anywhere, a run on 4 threads that condenses both takes 42
-seconds and at most 530 MB of heap, plus 490 MB of mapped stop times;
-a warm run takes 11 seconds and 460 MB of heap. With `--threads 1`,
-the heap stays under 340 MB, so `--threads` bounds memory. A
-planet-wide run should fit on a 2 GB machine with 2–4 threads. Scratch
-disk also holds the condensed feeds, about a GB planet-wide, and the
-downloads in progress. See the
-[technical design](TECHNICAL_DESIGN.md#measurements) for the details.
+A run keeps each feed's download, a condensed copy and its weekly
+history in the cache, so later runs download only what changed, and
+fall back to the last copy when a publisher is down. A planet-wide run
+should fit on a 2 GB machine. The [technical
+design](TECHNICAL_DESIGN.md#running-the-pipeline) covers the cache,
+memory, scratch disk and the other flags. [Running
+geosignals](../running.md) covers the container, the data BOM and
+`datapackage.json`.
