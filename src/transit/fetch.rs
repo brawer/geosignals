@@ -210,6 +210,9 @@ pub struct Fetched {
     pub last_day: i64,
     /// Whether any trip runs.
     pub has_trips: bool,
+    /// Whether this run condensed the feed, rather than reusing the
+    /// cached condensed copy.
+    pub condensed: bool,
 }
 
 impl Fetched {
@@ -457,7 +460,7 @@ impl<'a> Fetcher<'a> {
         if let Some(data) = stored.filter(|_| !changed)
             && let Some(l) = self.reuse(&key, &data, version, &inputs)?
         {
-            return Ok(Some(fetched(meta, status, stations_meta, l)));
+            return Ok(Some(fetched(meta, status, stations_meta, l, false)));
         }
 
         if !have_raw {
@@ -485,7 +488,7 @@ impl<'a> Fetcher<'a> {
         let data = full.encode()?;
         self.store.put(&key, &data)?;
         let l = self.load(&data, Some(&full))?;
-        Ok(Some(fetched(meta, status, stations_meta, l)))
+        Ok(Some(fetched(meta, status, stations_meta, l, true)))
     }
 
     /// The cached condensed feed `data`, if made by condenser `version`
@@ -692,6 +695,8 @@ impl<'a> Fetcher<'a> {
                 match self.download_one(src, url, previous, dest) {
                     Ok(d) => return Ok(d),
                     Err(e) if attempt < DOWNLOAD_ATTEMPTS && is_transient(&e) => {
+                        // The error names the URL.
+                        eprintln!("{e:#}; retrying in {backoff:?}");
                         std::thread::sleep(backoff);
                         backoff *= 4;
                     }
@@ -798,7 +803,13 @@ impl Drop for Cleanup<'_> {
     }
 }
 
-fn fetched(meta: Meta, status: Status, stations: Option<Meta>, l: Loaded) -> Fetched {
+fn fetched(
+    meta: Meta,
+    status: Status,
+    stations: Option<Meta>,
+    l: Loaded,
+    condensed: bool,
+) -> Fetched {
     Fetched {
         meta,
         status,
@@ -807,6 +818,7 @@ fn fetched(meta: Meta, status: Status, stations: Option<Meta>, l: Loaded) -> Fet
         outline: l.outline,
         last_day: l.last_day,
         has_trips: l.has_trips,
+        condensed,
     }
 }
 
