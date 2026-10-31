@@ -196,8 +196,8 @@ year, with many holiday variations.
 ### Versioning
 
 The header records which condenser made the file. Each condenser has
-its own version (`gtfs::VERSION`, `cif::VERSION`), and the version is
-part of the cache key (see [the cache](#fetching-and-the-cache)).
+its own version (`gtfs::VERSION`, `cif::VERSION`), and a run compares
+it before using a cached file (see [the cache](#fetching-and-the-cache)).
 Bumping it makes the next run condense every feed of that kind again,
 from the raw download that the cache keeps. The format byte guards the
 layout itself. A decoder rejects any other version and checks every
@@ -283,40 +283,57 @@ ordinary condensed feed, so no later step knows about CIF.
   Departures at TIPLOCs with neither are dropped, and the log names
   them.
 
-Since the placement depends on the NaPTAN file too, the cache key
-includes the hashes of both inputs.
+Since the placement depends on the NaPTAN file too, the condensed
+header records the hashes of both inputs, and a new NaPTAN file means
+condensing again.
 
 ## Fetching and the cache
 
 The cache is a key-value store ([`store.rs`](../../src/store.rs)):
 either a local directory, or an S3-compatible bucket with path-style
-URLs and SigV4 signing. For each feed it holds:
+URLs and SigV4 signing. Everything sits under `transit/`, so other
+signals can share the cache under their own prefixes. Every object has
+a fixed key:
 
 ```
-gtfs/<feed id>/meta.json                       URL, ETag, Last-Modified, SHA-256, SHA-512, fetch times
-gtfs/<feed id>/feed.zip                        the last download, as is
-gtfs/<feed id>/condensed-v<N>-<sha256:16>.bin  the condensed feed
-gtfs/<feed id>/history.bin                     weekly departures per pixel
+transit/<feed id>/condensed.bin         the condensed feed
+transit/<feed id>/gtfs.zip              the last download, as is (cif.gz for CIF)
+transit/<feed id>/history.bin           weekly departures per pixel
+transit/shared/<name>/<file>            NaPTAN and each catalog, fetched once per run
+transit/shared/<name>/<name>.json       its URL, ETag, Last-Modified, hashes, fetch times
+transit/index.json                      every feed's ETag, Last-Modified and hashes
 ```
 
-A CIF feed keeps `feed.cif.gz`, its NaPTAN file under `stations/`, and
-`condensed-cif-v<N>-<feed sha>-<stations sha>.bin`. The catalogs are
-cached the same way, under `catalogs/<name>/`, so a run works even
-when GitHub is down.
+The header of `condensed.bin` is the cache's record of a feed. It
+holds the condenser version and, for each input file, the URL asked
+for and where it redirected to, the `ETag`, `Last-Modified`, SHA-256,
+SHA-512, size, and when we first downloaded it. A CIF header lists the
+NaPTAN file too. Shared inputs have no condensed file, so they keep
+the same record in a small JSON file next to them, which works the same
+in S3 and in a local directory.
 
 A run asks each publisher whether the feed changed (`If-None-Match`,
 `If-Modified-Since`). If not, or if the download hashes to the same
-SHA-256, it loads the condensed file by its key and never opens the
-zip. If the publisher fails, the run retries transient errors with
-backoff, tries mirrors, and finally uses the cached copy however old,
-marked `stale` in the report.
+SHA-256, it loads `condensed.bin` and never opens the zip. If the
+publisher fails, the run retries transient errors with backoff, tries
+mirrors, and finally uses the cached copy however old, marked `stale`
+in the report. If the header names another condenser version or
+other inputs, the run condenses the raw file again and overwrites
+`condensed.bin`.
 
-The condensed key depends only on the condenser version and the input
-hash. Two consequences follow:
+Once every feed is fetched, the run writes `index.json`. The next run
+makes its conditional requests from it, so it never loads the stale
+`condensed.bin` of a feed that changed. The gain is modest, since
+unchanged feeds are read in full for the raster anyway, but there are
+thousands of feeds. The index is only a hint. Where it disagrees with
+a header, say after a crash, the run asks the publisher again with
+what the header says. Without an index, it reads the headers.
 
-- **Changing the method is cheap and safe.** A new condenser version
-  writes new keys next to the old ones. A run on old code still finds
-  its own files.
+Fixed keys have two consequences:
+
+- **A method change rebuilds in place.** A new condenser version
+  overwrites `condensed.bin`. Old and new code should therefore not
+  share a cache, or each would keep rebuilding what the other wrote.
 - **The raw download is kept,** so a new condenser can run without
   asking any publisher. That costs most of the cache's size: 169 MB and
   242 MB for the two feeds here, against 3.7 MB and 8.9 MB condensed.
@@ -493,7 +510,7 @@ ahead, each run adds to a per-feed history.
 ### The history file
 
 [`history.rs`](../../src/transit/history.rs) keeps
-`gtfs/<feed>/history.bin`, a zstd-compressed file containing:
+`transit/<feed>/history.bin`, a zstd-compressed file containing:
 
 - the Monday of the week when we first tracked the feed;
 - for each week (keyed by its Monday): the days of that week a
@@ -781,34 +798,6 @@ Moving to format 2 taught us:
 
 ## Open issues
 
-- **Cache layout.** Today a feed's `meta.json` is how a run finds
-  everything else: the condensed key contains the feed's hash, and
-  the store cannot list keys. The planned layout drops it by giving
-  every object a fixed key under one `transit/` prefix, so other
-  signals can share the cache under their own prefixes:
-
-  ```
-  transit/<feed id>/condensed.bin              format version, URL, final URL, ETag, Last-Modified, hashes in its header
-  transit/<feed id>/gtfs.zip                   or cif.gz: the last download, as is
-  transit/<feed id>/history.bin                weekly departures per pixel
-  transit/shared/<name>/<file>                 NaPTAN and each catalog, fetched once per run
-  transit/shared/<name>/<name>.json            its URL, ETag, Last-Modified and hashes
-  transit/index.json                           written at the end of a run
-  ```
-
-  The header becomes the source of truth for a feed, and an outdated
-  `condensed.bin` is rebuilt in place. A CIF header records the hash
-  of the NaPTAN file it used, so a new NaPTAN triggers a rebuild.
-  Shared inputs have no condensed file, so they keep a small sidecar
-  JSON, the same in S3 and in a local directory.
-
-  `index.json` lists every feed's ETag, Last-Modified, hashes and
-  format version. The next run makes its conditional requests from
-  it, so it never loads the stale `condensed.bin` of a feed that
-  changed. It is only a hint: if it is missing or out of date, say
-  after a crash, the run falls back to each file's header. The gain is
-  modest, since unchanged feeds are read in full for the raster
-  anyway, but there are thousands of feeds.
 - **Decoding twice.** A warm run decodes each feed for dedup and
   again for the history. Keeping the weekly totals from the first pass
   would halve that.
