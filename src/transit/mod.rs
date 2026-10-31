@@ -372,6 +372,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
             license_url: feed.license.url.clone(),
             copyright: feed.license.attribution.clone(),
             sha256: Some(f.meta.sha256.clone()),
+            sha512: f.meta.sha512.clone(),
             evidence: feed.license.evidence.clone(),
         });
         if let (Some(st), Some(meta)) = (&feed.stations, &f.stations) {
@@ -383,6 +384,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
                 license_url: st.license.url.clone(),
                 copyright: st.license.attribution.clone(),
                 sha256: Some(meta.sha256.clone()),
+                sha512: meta.sha512.clone(),
                 evidence: None,
             });
         }
@@ -501,6 +503,7 @@ impl CatalogInput {
             license_url,
             copyright: copyright.map(str::to_string),
             sha256: self.fetched.as_ref().map(|(m, _)| m.sha256.clone()),
+            sha512: self.fetched.as_ref().and_then(|(m, _)| m.sha512.clone()),
             evidence: None,
         }
     }

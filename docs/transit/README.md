@@ -38,7 +38,7 @@ and a [STAC](../running.md#stac-catalog) item and collection:
 | File | What it holds |
 | --- | --- |
 | `transit-departures.2026-10-26.tiff` | The raster |
-| `transit-departures.2026-10-26.cdx.json` | Every catalog and feed that went in, with its URL, SHA-256, license and attribution |
+| `transit-departures.2026-10-26.cdx.json` | Every catalog and feed that went in, with its URL, SHA-256, SHA-512, license and attribution |
 | `transit-departures.2026-10-26.report.json` | Each feed's status, weeks counted, departures and duplicates, and the sources that were skipped, with reasons |
 | `datapackage.json` | The GeoTIFF and BOM as a Frictionless data package, with the license |
 | `transit-departures.2026-10-26.stac.json` | The GeoTIFF and BOM as a STAC item, with the license and projection |

@@ -183,6 +183,7 @@ pub struct Source {
     /// Attribution that its publisher asks for.
     pub copyright: Option<String>,
     pub sha256: Option<String>,
+    pub sha512: Option<String>,
     /// Page that grants us permission to use it, such as the publisher's
     /// list of databases it authorised.
     pub evidence: Option<String>,
@@ -259,8 +260,15 @@ fn source_component(s: &Source) -> Value {
     if let Some(copyright) = &s.copyright {
         c["copyright"] = json!(copyright);
     }
+    let mut hashes = Vec::new();
     if let Some(h) = &s.sha256 {
-        c["hashes"] = json!([{"alg": "SHA-256", "content": h}]);
+        hashes.push(json!({"alg": "SHA-256", "content": h}));
+    }
+    if let Some(h) = &s.sha512 {
+        hashes.push(json!({"alg": "SHA-512", "content": h}));
+    }
+    if !hashes.is_empty() {
+        c["hashes"] = json!(hashes);
     }
     c
 }
@@ -564,6 +572,29 @@ mod tests {
         assert_eq!(refs[1]["url"], "https://otd.example/authorised");
         let plain = source_component(&Source::default());
         assert_eq!(plain["externalReferences"], json!([]));
+    }
+
+    #[test]
+    fn source_hashes() {
+        let c = source_component(&Source {
+            name: "gtfs/ch/otd".into(),
+            sha256: Some("ab".repeat(32)),
+            sha512: Some("cd".repeat(64)),
+            ..Default::default()
+        });
+        assert_eq!(
+            c["hashes"],
+            json!([
+                {"alg": "SHA-256", "content": "ab".repeat(32)},
+                {"alg": "SHA-512", "content": "cd".repeat(64)},
+            ])
+        );
+        let old = source_component(&Source {
+            sha256: Some("ab".repeat(32)),
+            ..Default::default()
+        });
+        assert_eq!(old["hashes"].as_array().unwrap().len(), 1);
+        assert!(source_component(&Source::default())["hashes"].is_null());
     }
 
     #[test]

@@ -8,7 +8,7 @@
 mod common;
 
 use geosignals::tile;
-use geosignals::transit::{self, Licenses};
+use geosignals::transit::{self, Licenses, condensed};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -233,6 +233,18 @@ fn config(dir: &Path, base: &str) -> transit::Config {
     }
 }
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    hex(ring::digest::digest(&ring::digest::SHA256, data).as_ref())
+}
+
+fn sha512_hex(data: &[u8]) -> String {
+    hex(ring::digest::digest(&ring::digest::SHA512, data).as_ref())
+}
+
 /// Pixel value at a location in the full-resolution image.
 fn value_at(img: &common::Image, (lon, lat): (f64, f64)) -> u16 {
     let (x, y) = tile::pixel_xy(lon, lat).unwrap();
@@ -339,6 +351,14 @@ fn counts_departures_through_cache() {
     assert_eq!(components[0]["licenses"][0]["license"]["id"], "CC0-1.0");
     assert!(components[0]["hashes"][0]["content"].is_string());
     assert!(components[1].get("licenses").is_none(), "unknown license");
+    let national_sha512 = sha512_hex(&national());
+    assert_eq!(
+        components[2]["hashes"],
+        serde_json::json!([
+            {"alg": "SHA-256", "content": sha256_hex(&national())},
+            {"alg": "SHA-512", "content": national_sha512},
+        ])
+    );
     assert_eq!(components[2]["licenses"][0]["license"]["id"], "CC-BY-4.0");
     assert_eq!(components[2]["copyright"], "National Rail");
     assert_eq!(
@@ -372,11 +392,44 @@ fn counts_departures_through_cache() {
     );
     assert_eq!(std::fs::read(&s2.output).unwrap(), tiff);
 
+    // A cache from before SHA-512: meta.json lacks it, and so does the
+    // condensed header. The next run, even with the server down, fills
+    // in both from the cached download.
+    let feed_dir = dir.path().join("cache/gtfs/ch/national");
+    let meta_path = feed_dir.join("meta.json");
+    let mut meta: Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+    meta.as_object_mut().unwrap().remove("sha512");
+    std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    let condensed_path = std::fs::read_dir(&feed_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("condensed-")
+        })
+        .unwrap();
+    let mut feed = condensed::Feed::decode(&std::fs::read(&condensed_path).unwrap()).unwrap();
+    assert_eq!(hex(&feed.inputs[0].sha512), national_sha512);
+    feed.inputs[0].sha512.clear();
+    std::fs::write(&condensed_path, feed.encode().unwrap()).unwrap();
+
     // Third run: the server is down, so the cached copies are used.
     server.down.store(true, Ordering::SeqCst);
     let s3 = transit::run(&cfg).unwrap();
     assert_eq!((s3.feeds, s3.stale), (2, 2));
     assert_eq!(std::fs::read(&s3.output).unwrap(), tiff);
+    let meta: Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+    assert_eq!(meta["sha512"], national_sha512);
+    let feed = condensed::Feed::decode(&std::fs::read(&condensed_path).unwrap()).unwrap();
+    assert_eq!(hex(&feed.inputs[0].sha512), national_sha512);
+    let bom: Value = serde_json::from_slice(&std::fs::read(&s3.bom).unwrap()).unwrap();
+    assert_eq!(
+        bom["components"][2]["hashes"][1]["content"],
+        national_sha512
+    );
     let report: Value = serde_json::from_slice(&std::fs::read(&s3.report).unwrap()).unwrap();
     assert_eq!(report["catalogs"][0]["status"], "stale");
     assert_eq!(report["catalogs"][0]["commit"], COMMIT);

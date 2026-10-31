@@ -6,7 +6,8 @@
 //! For each feed, the cache holds three objects under `gtfs/<feed>/`:
 //!
 //! - `meta.json`: where the feed was last downloaded from, its `ETag`,
-//!   `Last-Modified` and SHA-256, and when it was fetched and checked;
+//!   `Last-Modified`, SHA-256 and SHA-512, and when it was fetched and
+//!   checked;
 //! - `feed.zip`: the feed as downloaded, so it can be condensed again
 //!   when the method changes;
 //! - `condensed-v<N>-<sha256 prefix>.bin`: the condensed feed; see
@@ -50,6 +51,8 @@ pub struct Meta {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub sha256: String,
+    /// Missing in `meta.json` files written before we computed it.
+    pub sha512: Option<String>,
     pub bytes: u64,
     /// When this content was first downloaded, in seconds since the epoch.
     pub fetched: i64,
@@ -65,6 +68,7 @@ impl Meta {
             "etag": self.etag,
             "last_modified": self.last_modified,
             "sha256": self.sha256,
+            "sha512": self.sha512,
             "bytes": self.bytes,
             "fetched": crate::date::rfc3339(self.fetched),
             "checked": crate::date::rfc3339(self.checked),
@@ -80,6 +84,7 @@ impl Meta {
             etag: s("etag"),
             last_modified: s("last_modified"),
             sha256: s("sha256").filter(|h| h.len() == 64)?,
+            sha512: s("sha512").filter(|h| h.len() == 128),
             bytes: v["bytes"].as_u64()?,
             fetched: t("fetched")?,
             checked: t("checked")?,
@@ -249,9 +254,7 @@ impl Fetcher<'_> {
             gtfs::VERSION,
             &meta.sha256[..16]
         );
-        if let Some(data) = self.store.get(&condensed_key)?
-            && let Ok(l) = self.load(&data, None)
-        {
+        if let Some(l) = self.load_cached(&condensed_key, &[input(&meta)])? {
             return Ok(fetched(meta, status, None, l));
         }
         if !have_zip {
@@ -314,9 +317,7 @@ impl Fetcher<'_> {
             &meta.sha256[..16],
             &st_meta.sha256[..16]
         );
-        if let Some(data) = self.store.get(&condensed_key)?
-            && let Ok(l) = self.load(&data, None)
-        {
+        if let Some(l) = self.load_cached(&condensed_key, &[input(&meta), input(&st_meta)])? {
             return Ok(fetched(meta, status, Some(st_meta), l));
         }
         if !have_cif {
@@ -341,6 +342,35 @@ impl Fetcher<'_> {
         self.store.put(&condensed_key, &data)?;
         let l = self.load(&data, Some(&full))?;
         Ok(fetched(meta, status, Some(st_meta), l))
+    }
+
+    /// Loads the condensed feed under `key` from the cache, if it is
+    /// there and decodes. A file condensed before we computed SHA-512
+    /// gets the hashes from `inputs` and is stored again.
+    fn load_cached(&self, key: &str, inputs: &[condensed::Input]) -> Result<Option<Loaded>> {
+        let Some(data) = self.store.get(key)? else {
+            return Ok(None);
+        };
+        let Ok(mut feed) = condensed::Feed::decode(&data) else {
+            return Ok(None);
+        };
+        let mut patched = false;
+        for i in &mut feed.inputs {
+            if i.sha512.is_empty()
+                && let Some(new) = inputs
+                    .iter()
+                    .find(|n| n.sha256 == i.sha256 && !n.sha512.is_empty())
+            {
+                i.sha512 = new.sha512.clone();
+                patched = true;
+            }
+        }
+        if !patched {
+            return Ok(Some(self.load(&data, Some(&feed))?));
+        }
+        let data = feed.encode()?;
+        self.store.put(key, &data)?;
+        Ok(Some(self.load(&data, Some(&feed))?))
     }
 
     /// Checks an encoded condensed feed, `feed` if already decoded, and
@@ -388,7 +418,7 @@ impl Fetcher<'_> {
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
             .and_then(|v| Meta::from_json(&v));
         let mut downloaded = false;
-        let (meta, status) = match self.download(src, cached.as_ref(), dest) {
+        let (mut meta, status) = match self.download(src, cached.as_ref(), dest) {
             Ok(Download::NotModified) => {
                 let mut m = cached
                     .clone()
@@ -419,7 +449,17 @@ impl Fetcher<'_> {
                 None => return Err(e),
             },
         };
-        if !matches!(status, Status::Stale { .. }) {
+        // A meta.json from before we computed SHA-512: hash the cached
+        // copy once. If that fails, a later restore reports why.
+        let mut backfilled = false;
+        if meta.sha512.is_none()
+            && let Ok(sha512) = self.restore_cached(src, &meta, dest)
+        {
+            meta.sha512 = Some(sha512);
+            downloaded = true;
+            backfilled = true;
+        }
+        if backfilled || !matches!(status, Status::Stale { .. }) {
             let mut text = serde_json::to_vec_pretty(&meta.to_json())?;
             text.push(b'\n');
             self.store.put(&meta_key, &text)?;
@@ -428,18 +468,20 @@ impl Fetcher<'_> {
     }
 
     /// Copies the cached file of `src` to `dest`, checking its hash.
-    fn restore_cached(&self, src: &Source, meta: &Meta, dest: &Path) -> Result<()> {
+    /// Returns its SHA-512.
+    fn restore_cached(&self, src: &Source, meta: &Meta, dest: &Path) -> Result<String> {
         let key = format!("{}/{}", src.prefix, src.file);
         ensure!(
             self.store.download(&key, dest)?,
             "{key} is missing from {}",
             self.store.describe()
         );
+        let hashes = crate::bom::hash_file(dest)?;
         ensure!(
-            sha256_file(dest)? == meta.sha256,
+            hashes.sha256 == meta.sha256,
             "{key} in the cache does not match its meta.json"
         );
-        Ok(())
+        Ok(hashes.sha512)
     }
 
     /// Tries the URLs of `src` in turn.
@@ -492,7 +534,8 @@ impl Fetcher<'_> {
         let mut out = std::io::BufWriter::new(
             std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?,
         );
-        let mut sha = digest::Context::new(&digest::SHA256);
+        let mut sha256 = digest::Context::new(&digest::SHA256);
+        let mut sha512 = digest::Context::new(&digest::SHA512);
         let mut buf = vec![0u8; 1 << 16];
         let mut bytes = 0u64;
         loop {
@@ -505,7 +548,8 @@ impl Fetcher<'_> {
             if bytes == 0 && !buf[..n].starts_with(src.magic) {
                 bail!("{url} is not a {}", src.kind);
             }
-            sha.update(&buf[..n]);
+            sha256.update(&buf[..n]);
+            sha512.update(&buf[..n]);
             out.write_all(&buf[..n])?;
             bytes += n as u64;
         }
@@ -516,7 +560,8 @@ impl Fetcher<'_> {
             final_url: reader.url().to_string(),
             etag: reader.etag().map(str::to_string),
             last_modified: reader.last_modified().map(str::to_string),
-            sha256: hex(sha.finish().as_ref()),
+            sha256: hex(sha256.finish().as_ref()),
+            sha512: Some(hex(sha512.finish().as_ref())),
             bytes,
             fetched: self.now,
             checked: self.now,
@@ -573,38 +618,32 @@ fn fetched(meta: Meta, status: Status, stations: Option<Meta>, l: Loaded) -> Fet
 /// What a condensed feed records about a file it was made from.
 fn input(meta: &Meta) -> condensed::Input {
     let mut sha256 = [0u8; 32];
-    for (i, b) in sha256.iter_mut().enumerate() {
-        *b = meta
-            .sha256
-            .get(2 * i..2 * i + 2)
-            .and_then(|h| u8::from_str_radix(h, 16).ok())
-            .unwrap_or(0);
+    for (b, d) in sha256.iter_mut().zip(unhex(&meta.sha256)) {
+        *b = d;
     }
     condensed::Input {
         url: meta.url.clone(),
         etag: meta.etag.clone(),
         last_modified: meta.last_modified.clone(),
         sha256,
-        sha512: Vec::new(),
+        sha512: meta.sha512.as_deref().map(unhex).unwrap_or_default(),
         first_seen: meta.fetched,
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// Decodes lowercase hex; bad digits become zero.
+fn unhex(h: &str) -> Vec<u8> {
+    (0..h.len() / 2)
+        .map(|i| {
+            h.get(2 * i..2 * i + 2)
+                .and_then(|d| u8::from_str_radix(d, 16).ok())
+                .unwrap_or(0)
+        })
+        .collect()
 }
 
-fn sha256_file(path: &Path) -> Result<String> {
-    let mut f = std::fs::File::open(path)?;
-    let mut sha = digest::Context::new(&digest::SHA256);
-    let mut buf = vec![0u8; 1 << 16];
-    loop {
-        let n = f.read(&mut buf)?;
-        if n == 0 {
-            return Ok(hex(sha.finish().as_ref()));
-        }
-        sha.update(&buf[..n]);
-    }
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -644,6 +683,7 @@ mod tests {
             etag: Some("\"v1\"".into()),
             last_modified: None,
             sha256: "ab".repeat(32),
+            sha512: Some("cd".repeat(64)),
             bytes: 42,
             fetched: 1_780_000_000,
             checked: 1_780_086_400,
