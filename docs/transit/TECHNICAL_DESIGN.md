@@ -293,7 +293,7 @@ either a local directory, or an S3-compatible bucket with path-style
 URLs and SigV4 signing. For each feed it holds:
 
 ```
-gtfs/<feed id>/meta.json                       URL, ETag, Last-Modified, SHA-256, fetch times
+gtfs/<feed id>/meta.json                       URL, ETag, Last-Modified, SHA-256, SHA-512, fetch times
 gtfs/<feed id>/feed.zip                        the last download, as is
 gtfs/<feed id>/condensed-v<N>-<sha256:16>.bin  the condensed feed
 gtfs/<feed id>/history.bin                     weekly departures per pixel
@@ -781,8 +781,6 @@ Moving to format 2 taught us:
 
 ## Open issues
 
-- **SHA-512.** The header has room for each input's SHA-512, but
-  `fetch` doesn't compute it yet.
 - **Cache layout.** `meta.json` duplicates what the condensed header
   records. A planned move to a `transit/` prefix would drop it.
 - **Decoding twice.** A warm run decodes each feed for dedup and
