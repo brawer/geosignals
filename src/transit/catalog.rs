@@ -420,10 +420,19 @@ fn gtfs_data_jp(catalogs: &Catalogs) -> GtfsDataJp {
             });
             continue;
         }
+        // gtfs-data.jp gives no attribution text, so credit the feed by
+        // its name, which names the town or operator.
+        let mut license = atlas_license(&feed["license"]);
+        if license.attribution.is_none() {
+            license.attribution = feed["name"]
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .map(|n| format!("{n}, via gtfs-data.jp"));
+        }
         out.feeds.push(Feed {
             id,
             urls: vec![url.to_string()],
-            license: atlas_license(&feed["license"]),
+            license,
             ..Feed::default()
         });
     }
@@ -742,7 +751,7 @@ mod tests {
         };
         let mut c = Catalogs::default();
         let atlas = json!({"feeds": [
-            {"id": "f-a-city~bus", "spec": "gtfs", "urls": {"static_current": url("a-city", "bus")},
+            {"id": "f-a-city~bus", "name": "A市バス", "spec": "gtfs", "urls": {"static_current": url("a-city", "bus")},
              "license": {"spdx_identifier": "CC-BY-4.0", "create_derived_product": "yes"}},
             {"id": "f-b~tram", "spec": "gtfs", "urls": {"static_current": url("b", "tram")}},
             {"id": "f-a-city~bus~rt", "spec": "gtfs-rt", "urls": {"realtime_trip_updates": "https://rt/"}},
@@ -775,6 +784,10 @@ mod tests {
         assert!(skipped.is_empty(), "{skipped:?}");
         assert_eq!(feeds[1].urls, [url("a-city", "bus")]);
         assert!(feeds[1].license.is_open());
+        assert_eq!(
+            feeds[1].license.attribution.as_deref(),
+            Some("A市バス, via gtfs-data.jp")
+        );
         assert!(!feeds[2].license.is_open(), "no license");
     }
 
