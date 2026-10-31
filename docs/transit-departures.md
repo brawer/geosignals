@@ -192,26 +192,41 @@ buses from across the border, and regional feeds overlap with national
 ones. Counting both copies would double the density exactly where
 feeds overlap.
 
-So we compare every pair of feeds with stops in the same 1 km tile
-(zoom 15). A departure of the smaller feed matches if the larger feed
-departs on the same weekday within one pixel (about 150 m) and one
-minute of it. A trip whose departures match at least 80% (and at least
-two of them) is dropped from the smaller feed on that weekday. The
-copy in the largest feed survives.
+So we compare every pair of feeds with stations in the same 1 km tile
+(zoom 15), on the days both calendars cover. The smaller feed is the
+one with fewer departures on an average day. A departure of the
+smaller feed matches on a date if the larger feed departs that date
+within one pixel (about 150 m) and one minute of it. A trip whose
+departures match at least 80% (and at least two of them) is a
+duplicate on that date. The copy in the largest feed survives.
+
+Comparing dates keeps a summer timetable from matching a winter one,
+and a holiday from matching a normal day. Feeds whose calendars share
+no day are not compared. For a pair, we look only at the larger
+feed's stations near the smaller feed, and at the trips through
+them, so comparing a local feed with a national one costs about as
+much as the local feed.
+
+The output still shows each feed's median week, which is often outside
+the days two feeds share. So a trip is dropped from its median week on
+every weekday on which it was a duplicate on some date.
 
 In the test run:
 
 - **bodo:** 619,483 of its 701,938 weekly departures were also in the
-  German national feed, and were dropped.
-- **Switzerland:** 681,349 of 18.9 million were dropped. Almost all
-  were German operators near the border, such as Südbadenbus and
-  SWEG. These are the same ones Transitous removes by hand.
+  German national feed, and were dropped (when we compared weekdays of
+  the median weeks).
+- **Switzerland:** 671,389 of 18.9 million were dropped (681,349 when
+  we compared weekdays of the median weeks). The German feed covered
+  only 31 days, which the two feeds compared on. Almost all were
+  German operators near the border, such as Südbadenbus and SWEG.
+  These are the same ones Transitous removes by hand.
 
 To check for false matches, we shifted one feed's times by seven
 minutes. That matched 0.05% of trips, against 3.8% without the shift.
 
-The report lists, for each pair of feeds, how many departures were
-dropped and from which agencies.
+The report lists, for each pair of feeds, the days they share and how
+many departures a week were duplicates, by agency.
 
 ### Grid and encoding
 

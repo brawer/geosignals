@@ -30,7 +30,8 @@
 use super::catalog::{Feed, Format};
 use super::cif;
 use super::condensed;
-use super::gtfs::{self, Condensed};
+use super::dedup::Outline;
+use super::gtfs;
 use crate::http::HttpReader;
 use crate::store::Store;
 use anyhow::{Context, Result, bail, ensure};
@@ -111,9 +112,31 @@ pub enum Status {
 pub struct Fetched {
     pub meta: Meta,
     pub status: Status,
-    pub condensed: Condensed,
     /// For CIF: the NaPTAN file that placed the stations.
     pub stations: Option<Meta>,
+    /// The condensed feed, encoded, in a memory-mapped scratch file so
+    /// that thousands of them stay off the heap; see [`Fetched::feed`].
+    pub data: memmap2::Mmap,
+    pub outline: Outline,
+    /// Last day with service, as the feed claims it.
+    pub last_day: i64,
+    /// Whether any trip runs.
+    pub has_trips: bool,
+}
+
+impl Fetched {
+    /// Decodes the condensed feed.
+    pub fn feed(&self) -> Result<condensed::Feed> {
+        condensed::Feed::decode(&self.data)
+    }
+}
+
+/// A condensed feed and what a run needs to know of it up front.
+struct Loaded {
+    data: memmap2::Mmap,
+    outline: Outline,
+    last_day: i64,
+    has_trips: bool,
 }
 
 pub struct Fetcher<'a> {
@@ -227,14 +250,9 @@ impl Fetcher<'_> {
             &meta.sha256[..16]
         );
         if let Some(data) = self.store.get(&condensed_key)?
-            && let Ok(c) = self.median_week(&data)
+            && let Ok(l) = self.load(&data, None)
         {
-            return Ok(Fetched {
-                meta,
-                status,
-                condensed: c,
-                stations: None,
-            });
+            return Ok(fetched(meta, status, None, l));
         }
         if !have_zip {
             self.restore_cached(&src, &meta, &zip_path)?;
@@ -242,13 +260,10 @@ impl Fetcher<'_> {
         let mut full = gtfs::condense_in(&zip_path, Some(self.tmp))
             .with_context(|| format!("condensing {}", feed.id))?;
         full.inputs = vec![input(&meta)];
-        let condensed = self.store_condensed(&condensed_key, &full)?;
-        Ok(Fetched {
-            meta,
-            status,
-            condensed,
-            stations: None,
-        })
+        let data = full.encode()?;
+        self.store.put(&condensed_key, &data)?;
+        let l = self.load(&data, Some(&full))?;
+        Ok(fetched(meta, status, None, l))
     }
 
     /// Like [`Fetcher::fetch`], for a CIF feed and its stations. The
@@ -300,14 +315,9 @@ impl Fetcher<'_> {
             &st_meta.sha256[..16]
         );
         if let Some(data) = self.store.get(&condensed_key)?
-            && let Ok(c) = self.median_week(&data)
+            && let Ok(l) = self.load(&data, None)
         {
-            return Ok(Fetched {
-                meta,
-                status,
-                condensed: c,
-                stations: Some(st_meta),
-            });
+            return Ok(fetched(meta, status, Some(st_meta), l));
         }
         if !have_cif {
             self.restore_cached(&src, &meta, &cif_path)?;
@@ -327,24 +337,33 @@ impl Fetcher<'_> {
         let mut full = cif::condense_path(&cif_path, &naptan)
             .with_context(|| format!("condensing {}", feed.id))?;
         full.inputs = vec![input(&meta), input(&st_meta)];
-        let condensed = self.store_condensed(&condensed_key, &full)?;
-        Ok(Fetched {
-            meta,
-            status,
-            condensed,
-            stations: Some(st_meta),
+        let data = full.encode()?;
+        self.store.put(&condensed_key, &data)?;
+        let l = self.load(&data, Some(&full))?;
+        Ok(fetched(meta, status, Some(st_meta), l))
+    }
+
+    /// Checks an encoded condensed feed, `feed` if already decoded, and
+    /// moves it to a scratch file.
+    fn load(&self, data: &[u8], feed: Option<&condensed::Feed>) -> Result<Loaded> {
+        let decoded;
+        let feed = match feed {
+            Some(f) => f,
+            None => {
+                decoded = condensed::Feed::decode(data)?;
+                &decoded
+            }
+        };
+        let mut file = tempfile::tempfile_in(self.tmp)?;
+        file.write_all(data)?;
+        // SAFETY: the file is ours alone and unlinked; nothing changes it.
+        let data = unsafe { memmap2::Mmap::map(&file)? };
+        Ok(Loaded {
+            data,
+            outline: Outline::new(feed),
+            last_day: feed.last_day,
+            has_trips: !feed.trips.is_empty() || !feed.frequencies.is_empty(),
         })
-    }
-
-    /// The median week of an encoded condensed feed.
-    fn median_week(&self, data: &[u8]) -> Result<Condensed> {
-        condensed::Feed::decode(data)?.median_week(Some(self.tmp))
-    }
-
-    /// Stores a condensed feed in the cache, and returns its median week.
-    fn store_condensed(&self, key: &str, feed: &condensed::Feed) -> Result<Condensed> {
-        self.store.put(key, &feed.encode()?)?;
-        feed.median_week(Some(self.tmp))
     }
 
     /// Fetches `src` into the file `dest`, from its publisher if it
@@ -536,6 +555,18 @@ struct Cleanup<'a>(&'a Path);
 impl Drop for Cleanup<'_> {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(self.0);
+    }
+}
+
+fn fetched(meta: Meta, status: Status, stations: Option<Meta>, l: Loaded) -> Fetched {
+    Fetched {
+        meta,
+        status,
+        stations,
+        data: l.data,
+        outline: l.outline,
+        last_day: l.last_day,
+        has_trips: l.has_trips,
     }
 }
 
