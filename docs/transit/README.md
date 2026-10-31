@@ -393,8 +393,12 @@ cargo run --release -- transit-departures \
 
 - An `s3://` cache needs `CACHE_S3_ACCESS_KEY_ID`,
   `CACHE_S3_SECRET_ACCESS_KEY` and `CACHE_S3_ENDPOINT_URL`, plus
-  `CACHE_S3_REGION` if the provider wants one other than `auto`.
-  `--cache` can also be a local directory.
+  `CACHE_S3_REGION` if the provider wants one other than `auto`, and
+  `CACHE_S3_SESSION_TOKEN` for temporary credentials. `--cache` can
+  also be a local directory.
+- With `PUBLIC_S3_URL` and its credentials set, the release is
+  uploaded to public storage when the run is done; see [Running
+  geosignals](../running.md#publishing-to-source-cooperative).
 - `--date 2026-10-26` names the run's day. It defaults to today (UTC).
 - `--only ch/` restricts a run to some regions, and may be given
   several times.

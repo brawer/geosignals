@@ -121,6 +121,47 @@ attribution, so the data BOM stays the authority on sources and
 licenses. The smoke test checks the STAC files with pystac against the
 STAC schemas.
 
+## Publishing to Source Cooperative
+
+geosignals can upload each release to public S3-compatible storage,
+such as [Source Cooperative](https://source.coop), when the run is
+done. The step is optional and is configured with environment
+variables, like the transit cache's `CACHE_S3_*`:
+
+| Variable | |
+|---|---|
+| `PUBLIC_S3_URL` | Where to upload, as `s3://bucket/prefix`. On Source Cooperative, the bucket is the account and the prefix starts with the repository, such as `s3://brawer/geosignals`. |
+| `PUBLIC_S3_ACCESS_KEY_ID` | Access key. |
+| `PUBLIC_S3_SECRET_ACCESS_KEY` | Secret key. |
+| `PUBLIC_S3_ENDPOINT_URL` | The S3 endpoint, such as `https://data.source.coop`. Defaults to Amazon S3 in `PUBLIC_S3_REGION`. |
+| `PUBLIC_S3_REGION` | Defaults to `auto`. |
+| `PUBLIC_S3_SESSION_TOKEN` | Only for temporary credentials that come with a session token. |
+
+Take the values from the credentials that your storage provider shows
+for the repository. The standard `AWS_*` variables are not read, so
+the cache and the public storage can live with different providers.
+
+- When no `PUBLIC_S3_*` variable is set, nothing is uploaded, and the
+  run says so.
+- When some are set but `PUBLIC_S3_URL` or a key is missing, geosignals
+  stops before computing anything, rather than failing after hours.
+- Each signal goes into a folder named after it, such as
+  `s3://brawer/geosignals/osm-node-density/`, holding the same files
+  as its output directory. The dated files (GeoTIFFs, data BOMs, STAC
+  item) are uploaded first, and `datapackage.json` and `collection.json`
+  last, so readers never find a link to a file that isn't there yet.
+  Each object gets its media type, such as
+  `image/tiff; application=geotiff; profile=cloud-optimized`.
+- Partial or restricted outputs are never uploaded: runs with
+  `--smoke-test`, `--files`, `--only` or `--licenses any`.
+- If an upload fails after retries, the run exits with an error. The
+  files stay in `--output-dir`, and a rerun uploads them again.
+- Each file goes up in a single request, which S3 limits to 5 GB.
+
+`collection.json` lists the releases whose STAC items are in the local
+output directory. To keep older releases in the public catalog, keep
+the output directory between runs.
+
 ## Scratch space and memory
 
 `--workdir` (default: the system's temporary directory) holds sorted
