@@ -391,6 +391,10 @@ cargo run --release -- transit-departures \
   --cache s3://my-bucket/geosignals --output-dir transit
 ```
 
+- An `s3://` cache needs `CACHE_S3_ACCESS_KEY_ID`,
+  `CACHE_S3_SECRET_ACCESS_KEY` and `CACHE_S3_ENDPOINT_URL`, plus
+  `CACHE_S3_REGION` if the provider wants one other than `auto`.
+  `--cache` can also be a local directory.
 - `--date 2026-10-26` names the run's day. It defaults to today (UTC).
 - `--only ch/` restricts a run to some regions, and may be given
   several times.

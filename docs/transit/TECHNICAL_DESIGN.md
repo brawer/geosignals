@@ -622,8 +622,10 @@ what matters for operating it.
   not the signed URL it redirected to. Without the variables, the feed
   is skipped, except with `--offline`.
 - **Cache.** `--cache` is a directory or `s3://bucket/prefix`,
-  configured with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
-  `AWS_REGION` and `AWS_ENDPOINT_URL`. `--offline` uses only the cache.
+  configured with `CACHE_S3_ACCESS_KEY_ID`,
+  `CACHE_S3_SECRET_ACCESS_KEY`, `CACHE_S3_REGION` (default `auto`) and
+  `CACHE_S3_ENDPOINT_URL`. The standard `AWS_*` variables are not
+  read, since the cache need not be on Amazon. `--offline` uses only the cache.
   A cached feed is used however old, as long as its timetable ended at
   most `--max-expired-days` (default 90) before `--date`.
 - **Scratch disk.** `--workdir` holds downloads in progress, the stop

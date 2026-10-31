@@ -132,8 +132,9 @@ enum Command {
         #[arg(long, default_value = geosignals::transit::MOBILITY_DATABASE_CSV)]
         mobility_database: String,
         /// Where to keep downloaded and condensed feeds between runs: a
-        /// directory, or s3://bucket/prefix with credentials in AWS_ACCESS_KEY_ID,
-        /// AWS_SECRET_ACCESS_KEY, AWS_REGION and AWS_ENDPOINT_URL.
+        /// directory, or s3://bucket/prefix with credentials in
+        /// CACHE_S3_ACCESS_KEY_ID, CACHE_S3_SECRET_ACCESS_KEY, CACHE_S3_REGION
+        /// and CACHE_S3_ENDPOINT_URL.
         #[arg(long)]
         cache: String,
         /// Directory for the GeoTIFF, which gets named after --date,
