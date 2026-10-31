@@ -8,10 +8,11 @@
 //! 1. [`catalog`] reads the feed list and drops feeds whose license we
 //!    cannot republish.
 //! 2. [`fetch`] downloads each feed through the cache, or takes the
-//!    cached copy, and [`gtfs`] or [`cif`] condenses it to its median week.
+//!    cached copy, and [`gtfs`] or [`cif`] condenses it; see [`condensed`].
 //! 3. [`dedup`] drops trips that a larger feed also has.
-//! 4. Every departure in the median week adds 1/7 to its zoom-18 pixel,
-//!    which gives departures on an average day of that week.
+//! 4. [`history`] adds each feed's departures per pixel and week to
+//!    what earlier runs saw, and averages the past 12 months. Each
+//!    pixel gets the departures on an average day, summed over feeds.
 //!
 //! Besides the GeoTIFF, its data BOM and `datapackage.json`, a run
 //! writes a report with each feed's status and the duplicates found.
@@ -22,11 +23,12 @@ pub mod condensed;
 pub mod dedup;
 pub mod fetch;
 pub mod gtfs;
+pub mod history;
 pub mod repo;
 
 use crate::cog::{Grid, Metadata, Spool};
 use crate::histogram::Histogram;
-use crate::tile::{self, MAX_TILE_ZOOM, TILE_SIZE};
+use crate::tile::{MAX_TILE_ZOOM, TILE_SIZE};
 use crate::workdir::Workdir;
 use anyhow::{Context, Result, ensure};
 use catalog::{Catalogs, Feed};
@@ -119,9 +121,12 @@ pub struct Summary {
     /// Feeds without any data, and feeds whose service has ended.
     pub failed: usize,
     pub expired: usize,
-    /// Departures per week, before and after dropping duplicates.
-    pub departures: u64,
-    pub duplicates: u64,
+    /// Departures on an average day of the past 12 months, without
+    /// duplicates, summed over the feeds.
+    pub departures: f64,
+    /// Duplicates dropped, on an average day of the feeds' current
+    /// timetables.
+    pub duplicates: f64,
     pub pixels: u64,
 }
 
@@ -250,37 +255,54 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         start.elapsed()
     );
 
-    // Departures per week, by pixel.
-    let mut counts: HashMap<u64, u64> = HashMap::new();
-    for ((feed, f), dropped) in used.iter().zip(&dropped) {
-        let (c, dropped) = f
-            .feed()
-            .and_then(|full| full.median_week_without(Some(workdir.tmp()), dropped))
-            .with_context(|| format!("decoding {}", feed.id))?;
-        let mut duplicates = 0u64;
-        for (t, &d) in c.trips.iter().zip(&dropped) {
-            let days = t.days & !d;
-            duplicates += u64::from((t.days & d).count_ones()) * u64::from(t.len);
-            if days == 0 {
-                continue;
-            }
-            for s in c.trip_stops(t) {
-                *counts.entry(tile::pixel_key(s.x, s.y)).or_default() +=
-                    u64::from(days.count_ones());
-            }
+    // Each feed's average day over the past 12 months, from its history
+    // and its current calendar without duplicates.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let averaged: Vec<Result<(usize, Averaged)>> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..cfg.threads.max(1))
+            .map(|_| {
+                s.spawn(|| {
+                    let mut out = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((feed, f)) = used.get(i) else {
+                            return out;
+                        };
+                        out.push(
+                            average(fetcher.store, feed, f, &dropped[i], day)
+                                .with_context(|| format!("averaging {}", feed.id))
+                                .map(|a| (i, a)),
+                        );
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().expect("averaging worker panicked"))
+            .collect()
+    });
+    let mut averaged: Vec<(usize, Averaged)> = averaged.into_iter().collect::<Result<_>>()?;
+    averaged.sort_unstable_by_key(|(i, _)| *i);
+
+    let mut counts: HashMap<u64, f64> = HashMap::new();
+    for ((feed, f), (_, a)) in used.iter().zip(&averaged) {
+        let mut departures = 0.0;
+        for &(key, n) in &a.pixels {
+            *counts.entry(key).or_default() += n;
+            departures += n;
         }
-        let departures = c.departures_per_week();
         summary.departures += departures;
-        summary.duplicates += duplicates;
+        summary.duplicates += a.duplicates_per_day;
         let mut entry = json!({
             "id": feed.id,
             "status": status_name(&f.status),
             "url": public_url(feed, &f.meta),
             "fetched": crate::date::rfc3339(f.meta.fetched),
-            "median_week": day_string(c.week_start),
-            "last_day": day_string(c.last_day),
-            "departures_per_week": departures,
-            "duplicate_departures_per_week": duplicates,
+            "last_day": day_string(f.last_day),
+            "weeks": a.weeks,
+            "departures_per_day": round2(departures),
+            "duplicate_departures_per_day": round2(a.duplicates_per_day),
         });
         if let Some(spdx) = &feed.license.spdx {
             entry["license"] = json!(spdx);
@@ -296,13 +318,19 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         }
         report_feeds.push(entry);
     }
+    drop(averaged);
     summary.feeds = used.len();
-    let mut pixels: Vec<(u64, u64)> = counts.into_iter().collect();
+    // Thousandths of a departure per day, so seasonal service shows.
+    let mut pixels: Vec<(u64, u64)> = counts
+        .into_iter()
+        .map(|(k, n)| (k, (n * 1000.0).round() as u64))
+        .filter(|&(_, n)| n > 0)
+        .collect();
     pixels.sort_unstable();
     summary.pixels = pixels.len() as u64;
     eprintln!(
-        "{} departures per week from {} feeds ({} duplicates dropped) in {} pixels, {:.0?}",
-        summary.departures - summary.duplicates,
+        "{:.0} departures on an average day from {} feeds ({:.0} duplicates dropped) in {} pixels, {:.0?}",
+        summary.departures,
         summary.feeds,
         summary.duplicates,
         summary.pixels,
@@ -311,7 +339,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
 
     let mut spool = Spool::new(workdir.tmp(), Grid::WEB_MERCATOR)?;
     let mut hist = crate::raster::build(pixels, cfg.threads, &mut spool, |z, y, counts| {
-        crate::encode::pixels_scaled(z, y, counts, 1.0 / 7.0)
+        crate::encode::pixels_scaled(z, y, counts, 1.0 / 1000.0)
     })?;
     let full_tiles = spool.tiles_per_zoom[MAX_TILE_ZOOM as usize];
     let empty_tiles = (1u64 << (2 * MAX_TILE_ZOOM)) - full_tiles;
@@ -662,6 +690,54 @@ fn gdal_metadata(feeds: usize, hist: &Histogram) -> String {
         neg_offset = -offset,
         rat = hist.rat_xml(),
     )
+}
+
+/// What averaging one feed gives.
+struct Averaged {
+    /// Departures on an average day of the past 12 months, by pixel key.
+    pixels: Vec<(u64, f64)>,
+    /// Weeks that counted.
+    weeks: usize,
+    /// Duplicates dropped, on an average day of the current timetable.
+    duplicates_per_day: f64,
+}
+
+/// Adds a feed's current timetable, without its duplicates, to its
+/// history in the cache, and averages the past 12 months.
+fn average(
+    store: &dyn crate::store::Store,
+    feed: &Feed,
+    f: &Fetched,
+    dropped: &dedup::Dropped,
+    day: i64,
+) -> Result<Averaged> {
+    let key = format!("{}/history.bin", fetch::key_prefix(&feed.id));
+    let mut history = match store.get(&key)? {
+        None => history::History::new(day),
+        Some(data) => history::History::decode(&data).unwrap_or_else(|e| {
+            eprintln!("{}: starting a new history, since {key}: {e:#}", feed.id);
+            history::History::new(day)
+        }),
+    };
+    let full = f.feed()?;
+    let all = full.totals();
+    let without = full.totals_without(dropped);
+    let duplicates: u64 = all.values.iter().sum::<u64>() - without.values.iter().sum::<u64>();
+    let before = history.clone();
+    history.update(&full, &without, day);
+    if history != before {
+        store.put(&key, &history.encode()?)?;
+    }
+    let (pixels, weeks) = history.average(day);
+    Ok(Averaged {
+        pixels,
+        weeks,
+        duplicates_per_day: duplicates as f64 / f64::from(full.days.max(1)),
+    })
+}
+
+fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
 }
 
 #[cfg(test)]

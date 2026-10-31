@@ -38,7 +38,7 @@ and a [STAC](running.md#stac-catalog) item and collection:
 | --- | --- |
 | `transit-departures.2026-10-26.tiff` | The raster |
 | `transit-departures.2026-10-26.cdx.json` | Every catalog and feed that went in, with its URL, SHA-256, license and attribution |
-| `transit-departures.2026-10-26.report.json` | Each feed's status, median week, departures and duplicates, and the sources that were skipped, with reasons |
+| `transit-departures.2026-10-26.report.json` | Each feed's status, weeks counted, departures and duplicates, and the sources that were skipped, with reasons |
 | `datapackage.json` | The GeoTIFF and BOM as a Frictionless data package, with the license |
 | `transit-departures.2026-10-26.stac.json` | The GeoTIFF and BOM as a STAC item, with the license and projection |
 | `collection.json` | The STAC collection, linking to the items of every release in the directory |
@@ -152,7 +152,7 @@ permanent schedule.
   where the public one is missing. Like GTFS times, they are local and
   run on past midnight within a train.
 - **Bank holidays.** The flag that says whether a train runs on bank
-  holidays is ignored, since a median week rarely contains one.
+  holidays is ignored.
 - **Stations.** CIF names places by TIPLOC and has no coordinates. We
   place each TIPLOC by its railway station in
   [NaPTAN](https://www.gov.uk/government/publications/national-public-transport-access-node-schema),
@@ -164,26 +164,32 @@ permanent schedule.
 - **Modes.** Trains, buses and ships are kept apart in the condensed
   form, but as for GTFS the output doesn't distinguish them.
 
-### The median week
+### The 12-month average
 
-A feed's calendar usually spans weeks to a year, with holidays, school
-breaks and timetable changes. For each feed, we:
+Each pixel shows the departures on an average day of the 52 weeks up
+to the run. An average, rather than a typical week, keeps seasonal
+service: a ski bus that runs four months a year counts for about a
+third of its winter rate, and a summer ferry likewise. Holidays,
+school breaks and timetable changes count with their real weight.
 
-1. count its trips on each day;
-2. split the days into weeks from Monday to Sunday;
-3. take the week whose total is the median.
+Many feeds publish only the next few weeks, so the year is collected
+run by run. For each feed, the cache keeps a history: the departures
+per pixel in each week (Monday to Sunday), after removing duplicates,
+and how many days of the week a timetable covered. A run adds the
+weeks of the feed's current timetable; where it covers at least as
+many days of a week as an earlier one, it replaces it.
 
-The median skips holiday weeks, which have less service. It also skips
-the thin tail at the end of a feed, where the next timetable is not
-published yet. Weekends stay in, so a place with good weekday service
-and none on Sundays shows 6/7 of its weekday rate.
+Which weeks count:
 
-Each feed gets its own median week, so different feeds can describe
-different weeks. In the test run, the Swiss feed's median week began
-on 14 September 2026, the German one on 22 June and bodo's on 11 May.
-For places served by a single feed, this rarely matters. Where two
-feeds meet, a summer timetable may sit next to a winter one. The
-report lists each feed's median week.
+- a week some timetable covered, with the days it covered;
+- a week since we first tracked the feed that no timetable covered,
+  as zero: the operator ran nothing, or published nothing in time;
+- not a week before we tracked the feed that no timetable covered,
+  since we don't know it.
+
+There is no filter on weak weeks, since that would lift seasonal
+service back to its in-season level. During a feed's first year, the
+average covers fewer weeks; the report gives each feed's count.
 
 ### Duplicates
 
@@ -207,20 +213,16 @@ feed's stations near the smaller feed, and at the trips through
 them, so comparing a local feed with a national one costs about as
 much as the local feed.
 
-The output still shows each feed's median week, which is often outside
-the days two feeds share. So a trip is dropped from its median week on
-every weekday on which it was a duplicate on some date.
-
 In the test run:
 
 - **bodo:** 619,483 of its 701,938 weekly departures were also in the
-  German national feed, and were dropped (when we compared weekdays of
-  the median weeks).
-- **Switzerland:** 671,389 of 18.9 million were dropped (681,349 when
-  we compared weekdays of the median weeks). The German feed covered
-  only 31 days, which the two feeds compared on. Almost all were
-  German operators near the border, such as Südbadenbus and SWEG.
-  These are the same ones Transitous removes by hand.
+  German national feed (measured when we still compared median
+  weeks).
+- **Switzerland:** about 675,000 of 18.9 million departures a week
+  were duplicates on the 31 days it shares with the German feed.
+  Almost all were German operators near the border, such as
+  Südbadenbus and SWEG. These are the same ones Transitous removes
+  by hand.
 
 To check for false matches, we shifted one feed's times by seven
 minutes. That matched 0.05% of trips, against 3.8% without the shift.
@@ -423,8 +425,9 @@ feeds, for internal use only.
 (`s3://bucket/prefix`, configured with `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and `AWS_ENDPOINT_URL`). For each
 feed it keeps the last download, its `ETag`, `Last-Modified` and
-SHA-256, and a condensed copy with its whole calendar: stations,
-trip patterns, trips and the days each service runs. A run asks each
+SHA-256, a condensed copy with its whole calendar (stations, trip
+patterns, trips and the days each service runs), and its weekly
+history for the 12-month average. A run asks each
 publisher whether the feed changed (`If-None-Match`,
 `If-Modified-Since`), retries network errors, tries mirrors such as
 MobilityData's daily copy, and if all fail uses the cached copy,
@@ -444,6 +447,6 @@ seconds and 100 MB of heap, and still finishes within a 300 MB memory
 limit; a cold run on 4 threads, which condenses all three at once,
 takes a minute and 430 MB of heap, within a 1 GB limit. A planet-wide
 run should fit on a 2 GB machine with 2–4 threads. Scratch disk needs
-16 bytes per stop time of each feed being condensed, plus about 12
-bytes per stop time of the median week, a few GB planet-wide, plus
-the downloads in progress.
+16 bytes per stop time of each feed being condensed, plus the
+condensed feeds, about a GB planet-wide, plus the downloads in
+progress.
