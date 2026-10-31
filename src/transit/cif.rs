@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! Condenses a timetable in CIF, the format of Network Rail's SCHEDULE
-//! feed for Great Britain, to the departures of its median week.
+//! feed for Great Britain; see [`super::condensed`].
 //!
 //! CIF is a file of 80-character records. A train is a basic schedule
 //! (`BS`), which says from when to when and on which weekdays it runs,
@@ -21,8 +21,7 @@
 //! count on past midnight within a train.
 //!
 //! Trains, buses and ships with passengers count; freight and empty
-//! trains have no public calls. The bank holiday flag is ignored: the
-//! median week rarely contains a bank holiday.
+//! trains have no public calls. The bank holiday flag is ignored.
 //!
 //! CIF has no coordinates. Calling points are named by TIPLOC, which
 //! we look up in NaPTAN, where a station's ATCO code is `9100` and its
@@ -31,8 +30,8 @@
 //! stations have several. Departures at TIPLOCs without either are
 //! dropped.
 
-use super::gtfs::{self, Condensed, MAX_SPAN_DAYS, NO_TIME, Stop, Trip};
-use crate::tile;
+use super::condensed;
+use super::gtfs::{self, MAX_SPAN_DAYS, NO_TIME};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::{BufRead, Read};
@@ -40,9 +39,9 @@ use std::path::Path;
 
 /// Version of the CIF condensing method. Bumping it makes every run
 /// re-condense CIF feeds.
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 
-/// Railway stations from NaPTAN: zoom-18 pixel by TIPLOC.
+/// Railway stations from NaPTAN: zoom-24 position by TIPLOC.
 #[derive(Debug, Default)]
 pub struct Stations {
     by_tiploc: HashMap<String, (u32, u32)>,
@@ -73,7 +72,7 @@ impl Stations {
                 .zip(rec.get(lat).and_then(|v| v.parse::<f64>().ok()));
             if let Some((lon, lat)) = coords.filter(|&c| c != (0.0, 0.0))
                 && !tiploc.is_empty()
-                && let Some(p) = tile::pixel_xy(lon, lat)
+                && let Some(p) = condensed::station_xy(lon, lat)
             {
                 by_tiploc.insert(tiploc.to_string(), p);
             }
@@ -91,7 +90,7 @@ impl Stations {
 }
 
 /// Condenses the CIF file at `path`, gzipped or not.
-pub fn condense_path(path: &Path, stations: &Stations) -> Result<Condensed> {
+pub fn condense_path(path: &Path, stations: &Stations) -> Result<condensed::Feed> {
     let mut f = std::io::BufReader::with_capacity(
         1 << 20,
         std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?,
@@ -329,8 +328,8 @@ impl Parser {
     }
 }
 
-/// Condenses a CIF timetable to its median week.
-pub fn condense(input: impl BufRead, stations: &Stations) -> Result<Condensed> {
+/// Condenses a CIF timetable.
+pub fn condense(input: impl BufRead, stations: &Stations) -> Result<condensed::Feed> {
     let mut p = Parser {
         agencies: vec![String::new()],
         agency_index: HashMap::from([(String::new(), 0)]),
@@ -359,7 +358,7 @@ pub fn condense(input: impl BufRead, stations: &Stations) -> Result<Condensed> {
             by_crs.entry(crs.as_str()).or_insert(px);
         }
     }
-    let pixels: Vec<Option<(u32, u32)>> = p
+    let positions: Vec<Option<(u32, u32)>> = p
         .tiplocs
         .iter()
         .map(|t| {
@@ -373,7 +372,7 @@ pub fn condense(input: impl BufRead, stations: &Stations) -> Result<Condensed> {
     let unplaced: Vec<&str> = p
         .tiplocs
         .iter()
-        .zip(&pixels)
+        .zip(&positions)
         .filter(|(_, px)| px.is_none())
         .map(|(t, _)| t.as_str())
         .collect();
@@ -412,13 +411,42 @@ pub fn condense(input: impl BufRead, stations: &Stations) -> Result<Condensed> {
         counting().map(|s| s.from).min(),
         counting().map(|s| s.to).max(),
     ) else {
-        return Ok(Condensed {
+        return Ok(condensed::Feed {
+            condenser: u32::from(VERSION),
             agencies: p.agencies,
-            ..Condensed::default()
+            ..Default::default()
         });
     };
-    let hi = last_day.min(first_day + MAX_SPAN_DAYS - 1);
-    let mut per_day = vec![0i64; (hi - first_day + 1) as usize];
+    let days = (last_day.min(first_day + MAX_SPAN_DAYS - 1) - first_day + 1) as u32;
+
+    // A station for each placed TIPLOC.
+    let mut out = condensed::Feed {
+        condenser: u32::from(VERSION),
+        first_day,
+        days,
+        last_day,
+        agencies: p.agencies.clone(),
+        ..Default::default()
+    };
+    let station: Vec<Option<u32>> = p
+        .tiplocs
+        .iter()
+        .zip(&positions)
+        .map(|(t, pos)| {
+            pos.map(|(x, y)| {
+                out.stations.push(condensed::Station {
+                    x,
+                    y,
+                    id: t.clone(),
+                });
+                out.stations.len() as u32 - 1
+            })
+        })
+        .collect();
+
+    // On each day, the schedule that wins in each group runs; that
+    // gives each schedule its service.
+    let mut services: HashMap<u32, condensed::Service> = HashMap::new();
     for group in &groups {
         let lo = group
             .iter()
@@ -429,65 +457,55 @@ pub fn condense(input: impl BufRead, stations: &Stations) -> Result<Condensed> {
             .iter()
             .map(|&i| p.schedules[i as usize].to)
             .max()
-            .unwrap_or(hi);
-        for day in lo.max(first_day)..=up.min(hi) {
-            if winner(group, day).is_some() {
-                per_day[(day - first_day) as usize] += 1;
+            .unwrap_or(last_day);
+        for day in lo.max(first_day)..=up.min(first_day + i64::from(days) - 1) {
+            if let Some(w) = winner(group, day) {
+                services
+                    .entry(w)
+                    .or_insert_with(|| condensed::Service::new(days))
+                    .set((day - first_day) as u32);
             }
         }
     }
-    let week_start = gtfs::median_week(first_day, &per_day);
-
-    let mut trips = Vec::new();
-    let mut stops = Vec::new();
-    let mut days: HashMap<u32, u8> = HashMap::new();
-    for group in &groups {
-        days.clear();
-        for i in 0..7 {
-            if let Some(w) = winner(group, week_start + i) {
-                *days.entry(w).or_default() |= 1 << i;
-            }
-        }
-        let mut won: Vec<(u32, u8)> = days.iter().map(|(&w, &d)| (w, d)).collect();
-        won.sort_unstable();
-        for (w, d) in won {
-            let s = &p.schedules[w as usize];
-            let start = stops.len() as u32;
-            for r in &p.stops[s.start as usize..(s.start + s.len) as usize] {
-                if let Some((x, y)) = pixels[r.tiploc as usize] {
-                    stops.push(Stop {
-                        x,
-                        y,
-                        minute: r.minute,
-                    });
-                }
-            }
-            let len = stops.len() as u32 - start;
-            if len > 0 {
-                trips.push(Trip {
-                    agency: s.agency,
-                    route_type: s.route_type.unwrap_or(2),
-                    days: d,
-                    start,
-                    len,
-                });
-            }
-        }
+    let mut won: Vec<(u32, condensed::Service)> = services.into_iter().collect();
+    won.sort_unstable_by_key(|(w, _)| *w);
+    for (w, service) in won {
+        let s = &p.schedules[w as usize];
+        let deps: Vec<(u32, u16)> = p.stops[s.start as usize..(s.start + s.len) as usize]
+            .iter()
+            .filter_map(|r| Some((station[r.tiploc as usize]?, r.minute)))
+            .collect();
+        let Some(start) = deps.iter().map(|&(_, m)| m).min() else {
+            continue;
+        };
+        out.services.push(service);
+        out.patterns.push(condensed::Pattern {
+            agency: s.agency,
+            route_type: s.route_type.unwrap_or(2),
+            stops: deps
+                .iter()
+                .map(|&(station, m)| condensed::PatternStop {
+                    station,
+                    offset: m - start,
+                })
+                .collect(),
+        });
+        out.trips.push(condensed::Trip {
+            pattern: out.patterns.len() as u32 - 1,
+            service: out.services.len() as u32 - 1,
+            start,
+        });
     }
-    Ok(Condensed {
-        week_start,
-        first_day,
-        last_day,
-        agencies: p.agencies,
-        trips: trips.into(),
-        stops: stops.into(),
-    })
+    out.normalize();
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::date::days_from_civil;
+    use crate::tile;
+    use gtfs::Condensed;
 
     /// Pads a record to 80 characters, with fields at their offsets.
     fn rec(fields: &[(usize, &str)]) -> String {
@@ -571,7 +589,8 @@ mod tests {
     fn reads_naptan_rail_stations() {
         let s = stations();
         assert_eq!(s.len(), 3);
-        assert_eq!(s.by_tiploc["CLPHMJC"], px(B));
+        let (x, y) = s.by_tiploc["CLPHMJC"];
+        assert_eq!((x >> 6, y >> 6), px(B));
     }
 
     #[test]
@@ -651,7 +670,10 @@ mod tests {
 
     #[test]
     fn condenses_median_week() {
-        let c = condense(timetable().as_bytes(), &stations()).unwrap();
+        let c = condense(timetable().as_bytes(), &stations())
+            .unwrap()
+            .median_week(None)
+            .unwrap();
         assert_eq!(c.first_day, days_from_civil(2026, 6, 1));
         assert_eq!(c.last_day, days_from_civil(2026, 6, 30));
         // Full weeks start 1, 8, 15 and 22 June; the week of the 8th
@@ -678,7 +700,10 @@ mod tests {
     fn applies_cancellations_and_overlays() {
         // Only the week of 8 June is left, so it is the median.
         let tt = timetable().replace("260601260630", "260608260614");
-        let c = condense(tt.as_bytes(), &stations()).unwrap();
+        let c = condense(tt.as_bytes(), &stations())
+            .unwrap()
+            .median_week(None)
+            .unwrap();
         assert_eq!(c.week_start, days_from_civil(2026, 6, 8));
         assert_eq!(
             deps(&c),
@@ -705,7 +730,7 @@ mod tests {
         gz.write_all(timetable().as_bytes()).unwrap();
         gz.finish().unwrap();
         let c = condense_path(&path, &stations()).unwrap();
-        assert_eq!(c.trips.len(), 2);
+        assert_eq!(c.median_week(None).unwrap().trips.len(), 2);
     }
 
     #[test]
