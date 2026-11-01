@@ -156,7 +156,10 @@ the cache and the public storage can live with different providers.
   `--smoke-test`, `--files`, `--only` or `--licenses any`.
 - If an upload fails after retries, the run exits with an error. The
   files stay in `--output-dir`, and a rerun uploads them again.
-- Each file goes up in a single request, which S3 limits to 5 GB.
+- Files over 50 MiB go up as multipart uploads in 50 MiB parts, so a
+  network error repeats one part rather than the whole file. If the
+  upload fails anyway, geosignals aborts it, so the bucket doesn't keep
+  the parts. The transit cache uploads large files the same way.
 
 `collection.json` lists the releases whose STAC items are in the local
 output directory. To keep older releases in the public catalog, keep
