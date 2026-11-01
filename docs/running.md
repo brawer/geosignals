@@ -125,8 +125,7 @@ STAC schemas.
 
 geosignals can upload each release to public S3-compatible storage,
 such as [Source Cooperative](https://source.coop), when the run is
-done. The step is optional and is configured with environment
-variables, like the transit cache's `CACHE_S3_*`:
+done. The step is optional.
 
 | Variable | |
 |---|---|
@@ -135,7 +134,6 @@ variables, like the transit cache's `CACHE_S3_*`:
 | `PUBLIC_S3_SECRET_ACCESS_KEY` | Secret key. |
 | `PUBLIC_S3_ENDPOINT_URL` | The S3 endpoint, such as `https://data.source.coop`. Defaults to Amazon S3 in `PUBLIC_S3_REGION`. |
 | `PUBLIC_S3_REGION` | Defaults to `auto`. |
-| `PUBLIC_S3_SESSION_TOKEN` | Only for temporary credentials that come with a session token. |
 
 Take the values from the credentials that your storage provider shows
 for the repository. The standard `AWS_*` variables are not read, so

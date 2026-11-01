@@ -13,9 +13,8 @@
 //! AWS Signature Version 4, configured from environment variables:
 //! `CACHE_S3_ACCESS_KEY_ID`, `CACHE_S3_SECRET_ACCESS_KEY`,
 //! `CACHE_S3_REGION` (default `auto`, which Cloudflare R2 and others
-//! accept), `CACHE_S3_ENDPOINT_URL` (default Amazon S3 for the
-//! region) and, for temporary credentials, `CACHE_S3_SESSION_TOKEN`.
-//! The standard `AWS_*` variables are ignored. [`crate::publish`] uses
+//! accept) and `CACHE_S3_ENDPOINT_URL` (default Amazon S3 for the
+//! region). The standard `AWS_*` variables are ignored. [`crate::publish`] uses
 //! the same client with `PUBLIC_S3_*` variables. Payloads are
 //! sent unsigned, so uploads stream from disk without being read twice.
 //! Files over [`PART_SIZE`] go up as multipart uploads, in parts of
@@ -153,7 +152,6 @@ pub struct S3 {
     region: String,
     access_key: String,
     secret_key: String,
-    session_token: Option<String>,
     part_size: u64,
 }
 
@@ -181,7 +179,6 @@ impl S3 {
             var("ENDPOINT_URL").unwrap_or_else(|_| format!("https://s3.{region}.amazonaws.com"));
         let access_key = var("ACCESS_KEY_ID").map_err(|n| anyhow::anyhow!("{n} is not set"))?;
         let secret_key = var("SECRET_ACCESS_KEY").map_err(|n| anyhow::anyhow!("{n} is not set"))?;
-        let session_token = var("SESSION_TOKEN").ok();
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(30)))
@@ -196,7 +193,6 @@ impl S3 {
             region,
             access_key,
             secret_key,
-            session_token,
             part_size: PART_SIZE,
         })
     }
@@ -241,14 +237,6 @@ impl S3 {
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs() as i64;
             let amz_date = amz_date(now);
-            let mut signed = vec![
-                ("host", host.as_str()),
-                ("x-amz-content-sha256", UNSIGNED_PAYLOAD),
-                ("x-amz-date", amz_date.as_str()),
-            ];
-            if let Some(token) = &self.session_token {
-                signed.push(("x-amz-security-token", token.as_str()));
-            }
             let auth = authorization(
                 &self.access_key,
                 &self.secret_key,
@@ -256,17 +244,18 @@ impl S3 {
                 method,
                 &path,
                 query,
-                &signed,
+                &[
+                    ("host", host.as_str()),
+                    ("x-amz-content-sha256", UNSIGNED_PAYLOAD),
+                    ("x-amz-date", amz_date.as_str()),
+                ],
                 UNSIGNED_PAYLOAD,
             );
-            let mut headers = vec![
+            let headers = [
                 ("x-amz-content-sha256", UNSIGNED_PAYLOAD.to_string()),
-                ("x-amz-date", amz_date.clone()),
+                ("x-amz-date", amz_date),
                 ("authorization", auth),
             ];
-            if let Some(token) = &self.session_token {
-                headers.push(("x-amz-security-token", token.clone()));
-            }
             let result = send(&url, &headers);
             let retry = match &result {
                 Ok(resp) => {
@@ -780,7 +769,6 @@ mod tests {
             region: "auto".into(),
             access_key: "AKID".into(),
             secret_key: "secret".into(),
-            session_token: None,
             part_size: 4,
         }
     }

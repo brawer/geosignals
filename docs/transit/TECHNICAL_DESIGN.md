@@ -657,9 +657,8 @@ what matters for operating it.
   is skipped, except with `--offline`.
 - **Cache.** `--cache` is a directory or `s3://bucket/prefix`,
   configured with `CACHE_S3_ACCESS_KEY_ID`,
-  `CACHE_S3_SECRET_ACCESS_KEY`, `CACHE_S3_REGION` (default `auto`),
-  `CACHE_S3_ENDPOINT_URL` and, for temporary credentials,
-  `CACHE_S3_SESSION_TOKEN`. The standard `AWS_*` variables are not
+  `CACHE_S3_SECRET_ACCESS_KEY`, `CACHE_S3_REGION` (default `auto`) and
+  `CACHE_S3_ENDPOINT_URL`. The standard `AWS_*` variables are not
   read, since the cache need not be on Amazon. `--offline` uses only the cache.
 - **Publishing.** With `PUBLIC_S3_*` set, the finished release is
   uploaded to public storage; see [Running

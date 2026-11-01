@@ -139,8 +139,8 @@ enum Command {
         mobility_database: String,
         /// Where to keep downloaded and condensed feeds between runs: a
         /// directory, or s3://bucket/prefix with credentials in
-        /// CACHE_S3_ACCESS_KEY_ID, CACHE_S3_SECRET_ACCESS_KEY, CACHE_S3_REGION,
-        /// CACHE_S3_ENDPOINT_URL and, if needed, CACHE_S3_SESSION_TOKEN.
+        /// CACHE_S3_ACCESS_KEY_ID, CACHE_S3_SECRET_ACCESS_KEY, CACHE_S3_REGION
+        /// and CACHE_S3_ENDPOINT_URL.
         #[arg(long)]
         cache: String,
         /// Directory for the GeoTIFF, which gets named after --date,

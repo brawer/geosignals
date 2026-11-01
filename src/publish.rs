@@ -6,10 +6,9 @@
 //!
 //! The step is optional. It runs when `PUBLIC_S3_URL` is set to
 //! `s3://bucket/prefix`, with credentials in `PUBLIC_S3_ACCESS_KEY_ID`,
-//! `PUBLIC_S3_SECRET_ACCESS_KEY`, `PUBLIC_S3_ENDPOINT_URL`,
-//! `PUBLIC_S3_REGION` (default `auto`) and, for temporary credentials,
-//! `PUBLIC_S3_SESSION_TOKEN`, like the `CACHE_S3_*` variables of
-//! [`crate::store`]. When no `PUBLIC_S3_*` variable is set, nothing is
+//! `PUBLIC_S3_SECRET_ACCESS_KEY`, `PUBLIC_S3_ENDPOINT_URL` and
+//! `PUBLIC_S3_REGION` (default `auto`), like the `CACHE_S3_*` variables
+//! of [`crate::store`]. When no `PUBLIC_S3_*` variable is set, nothing is
 //! uploaded. When some are set but others are missing, the run fails
 //! before it starts, rather than computing for hours and then finding
 //! it can't publish.
