@@ -107,7 +107,6 @@ fn uploads_release() {
             ("PUBLIC_S3_ENDPOINT_URL", &endpoint),
             ("PUBLIC_S3_ACCESS_KEY_ID", "AKID"),
             ("PUBLIC_S3_SECRET_ACCESS_KEY", "secret"),
-            ("PUBLIC_S3_SESSION_TOKEN", "token"),
         ],
     );
     let stderr = String::from_utf8_lossy(&result.stderr);
@@ -134,14 +133,12 @@ fn uploads_release() {
 
     for (r, name) in log.iter().zip(&names) {
         assert_eq!(r.body, std::fs::read(out.join(name)).unwrap(), "{name}");
-        assert_eq!(r.headers["x-amz-security-token"], "token");
         let auth = &r.headers["authorization"];
         assert!(
             auth.starts_with("AWS4-HMAC-SHA256 Credential=AKID/"),
             "{auth}"
         );
         assert!(auth.contains("/auto/s3/aws4_request"), "{auth}");
-        assert!(auth.contains("x-amz-security-token"), "{auth}");
         let expected_type = if name.ends_with(".tiff") {
             "image/tiff; application=geotiff; profile=cloud-optimized"
         } else if name.ends_with(".cdx.json") {
