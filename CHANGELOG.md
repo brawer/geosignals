@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.4.0](https://github.com/brawer/geosignals/compare/v0.3.1...v0.4.0) (2026-11-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION and AWS_ENDPOINT_URL to their CACHE_S3_ equivalents.
+* the cache moves from gtfs/ and catalogs/ to transit/. The first run after upgrading downloads every feed again; the old prefixes can then be deleted.
+
+### 🆕 Enhancements
+
+* keep the transit cache under transit/ with fixed keys ([1e82a08](https://github.com/brawer/geosignals/commit/1e82a08d8798b974a0f74e7a6b5bad3b2663c6fb))
+* read cache credentials from CACHE_S3_* instead of AWS_* ([75a7b74](https://github.com/brawer/geosignals/commit/75a7b7407bb2314babb404e8d89905d29eb074ad))
+* record SHA-512 of transit inputs ([d7f184e](https://github.com/brawer/geosignals/commit/d7f184ee1426eb9d4cc02f7ffef3457bb9052c38))
+* **transit:** log cache use, download retries and run totals ([c382c40](https://github.com/brawer/geosignals/commit/c382c403a42244ca5c97bcb3ec31da719baeb80c))
+* upload files over 50 MiB in parts ([fbccee2](https://github.com/brawer/geosignals/commit/fbccee23fc69a864d41e024498f2d97858681952))
+* upload releases to public S3 storage such as source.coop ([92ebfa3](https://github.com/brawer/geosignals/commit/92ebfa3adab44b708dc21ec47bf44708344caa4a))
+
+
+### ⚡ Performance
+
+* compress condensed transit feeds at zstd level 19 ([d36da24](https://github.com/brawer/geosignals/commit/d36da24261cfbbd973cfb2bfd1870487589f8f6c))
+* reuse the stored weekly totals when updating a feed's history ([b276512](https://github.com/brawer/geosignals/commit/b276512bb0dcf5f067e2460cc0f39f3c7767ed77))
+
+
+### 📚 Documentation
+
+* describe the planned transit cache layout and run index ([da69b19](https://github.com/brawer/geosignals/commit/da69b190e2be905a67a5ba4821719b01ce48ca2b))
+* drop session tokens and tidy the publishing intro ([d270f80](https://github.com/brawer/geosignals/commit/d270f80b9afb4391e9fc4d11f4bfdafd9b872dee))
+* list repeated decoding under alternatives considered, not open issues ([4de644b](https://github.com/brawer/geosignals/commit/4de644bce7fccd53e5df5224190c9fefa136174e))
+
+
+### 🚧 Maintenance
+
+* **deps:** Bump the cargo group with 7 updates ([27e31a1](https://github.com/brawer/geosignals/commit/27e31a172a9b10df0c62c7ea41bf418baf0f5d22))
+
 ## [0.3.1](https://github.com/brawer/geosignals/compare/v0.3.0...v0.3.1) (2026-10-31)
 
 
