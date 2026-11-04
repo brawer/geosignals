@@ -132,6 +132,14 @@ the cache and the public storage can live with different providers.
   a link to a file that isn't there yet.
   Each object gets its media type, such as
   `image/tiff; application=geotiff; profile=cloud-optimized`.
+- After uploading, old releases are deleted from the signal's folder.
+  It keeps the three newest releases, any release dated within the
+  last seven days, and the release just uploaded; a release's date is
+  the date in its file names. Files without a date, such as the STAC
+  item, stay, except for `datapackage.json` and `collection.json` that
+  earlier versions wrote. The keys must allow listing and deleting
+  objects. If deleting fails, the run prints a warning but succeeds,
+  and the next run tries again.
 - Partial or restricted outputs are never uploaded: runs with
   `--smoke-test`, `--files`, `--only` or `--licenses any`.
 - If an upload fails after retries, the run exits with an error. The

@@ -221,9 +221,19 @@ impl S3 {
         method: &str,
         key: &str,
         query: &str,
+        send: impl FnMut(&str, &[(&str, String)]) -> Result<Response, ureq::Error>,
+    ) -> Result<Response> {
+        self.send_to(method, &self.object_path(key)?, query, send)
+    }
+
+    /// Like [`S3::send`], for a URL path such as `/bucket`.
+    fn send_to(
+        &self,
+        method: &str,
+        path: &str,
+        query: &str,
         mut send: impl FnMut(&str, &[(&str, String)]) -> Result<Response, ureq::Error>,
     ) -> Result<Response> {
-        let path = self.object_path(key)?;
         let url = if query.is_empty() {
             format!("{}{path}", self.endpoint)
         } else {
@@ -242,7 +252,7 @@ impl S3 {
                 &self.secret_key,
                 &self.region,
                 method,
-                &path,
+                path,
                 query,
                 &[
                     ("host", host.as_str()),
@@ -432,6 +442,81 @@ impl S3 {
         Ok(())
     }
 
+    /// The keys of all objects whose key starts with `dir` followed by
+    /// a slash, relative to the store's prefix.
+    pub fn list(&self, dir: &str) -> Result<Vec<String>> {
+        check_key(dir)?;
+        let full = if self.prefix.is_empty() {
+            format!("{dir}/")
+        } else {
+            format!("{}/{dir}/", self.prefix)
+        };
+        let path = format!("/{}", uri_encode(&self.bucket, false));
+        let mut keys = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            // SigV4 wants the parameters sorted by name.
+            let mut query = String::new();
+            if let Some(t) = &token {
+                query.push_str(&format!("continuation-token={}&", uri_encode(t, false)));
+            }
+            query.push_str(&format!("list-type=2&prefix={}", uri_encode(&full, false)));
+            let resp = self.send_to("GET", &path, &query, |url, headers| {
+                let mut req = self.agent.get(url);
+                for (k, v) in headers {
+                    req = req.header(*k, v);
+                }
+                req.call()
+            })?;
+            let status = resp.status();
+            let mut text = String::new();
+            resp.into_body()
+                .into_with_config()
+                .limit(64 << 20)
+                .reader()
+                .read_to_string(&mut text)
+                .with_context(|| format!("listing {dir} in {}", self.describe()))?;
+            ensure!(
+                status.is_success(),
+                "listing {dir} in {}: {status}: {text}",
+                self.describe()
+            );
+            for key in xml_elements(&text, "Key") {
+                let rel = key
+                    .strip_prefix(&full)
+                    .with_context(|| format!("listing {dir} gave unexpected key {key}"))?;
+                keys.push(format!("{dir}/{rel}"));
+            }
+            if xml_element(&text, "IsTruncated").as_deref() != Some("true") {
+                return Ok(keys);
+            }
+            token = Some(
+                xml_element(&text, "NextContinuationToken")
+                    .with_context(|| format!("listing {dir}: truncated, but no token"))?,
+            );
+        }
+    }
+
+    /// Deletes the object at `key`. Deleting a missing object is no error.
+    pub fn delete(&self, key: &str) -> Result<()> {
+        let resp = self.send("DELETE", key, "", |url, headers| {
+            let mut req = self.agent.delete(url);
+            for (k, v) in headers {
+                req = req.header(*k, v);
+            }
+            req.call()
+        })?;
+        let status = resp.status();
+        if !status.is_success() && status != StatusCode::NOT_FOUND {
+            bail!(
+                "DELETE {key} from {}: {status}: {}",
+                self.describe(),
+                error_body(resp)
+            );
+        }
+        Ok(())
+    }
+
     /// Where `key` goes, for log messages.
     pub fn describe_key(&self, key: &str) -> String {
         if self.prefix.is_empty() {
@@ -509,6 +594,24 @@ fn xml_element(xml: &str, name: &str) -> Option<String> {
             .replace("&gt;", ">")
             .replace("&amp;", "&"),
     )
+}
+
+/// The text of every `<name>` element in `xml`, unescaped.
+fn xml_elements(xml: &str, name: &str) -> Vec<String> {
+    let (open, close) = (format!("<{name}>"), format!("</{name}>"));
+    let mut found = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find(&open) {
+        rest = &rest[start..];
+        let Some(end) = rest.find(&close) else {
+            break;
+        };
+        if let Some(text) = xml_element(&rest[..end + close.len()], name) {
+            found.push(text);
+        }
+        rest = &rest[end + close.len()..];
+    }
+    found
 }
 
 fn xml_escape(s: &str) -> String {
