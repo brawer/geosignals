@@ -14,7 +14,7 @@
 //!    what earlier runs saw, and averages the past 12 months. Each
 //!    pixel gets the departures on an average day, summed over feeds.
 //!
-//! Besides the GeoTIFF, its data BOM and `datapackage.json`, a run
+//! Besides the GeoTIFF, its data BOM and STAC item, a run
 //! writes a report with each feed's status and the duplicates found.
 
 pub mod catalog;
@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
+const PACKAGE: crate::stac::Package = crate::stac::Package {
     name: "transit-departures",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#transit-departures").
     // Frozen: catalogs key on it, so it keeps the repo's old name.
@@ -112,7 +112,7 @@ pub struct Config {
 pub struct Summary {
     pub output: PathBuf,
     pub bom: PathBuf,
-    pub datapackage: PathBuf,
+    pub stac: PathBuf,
     pub report: PathBuf,
     /// Feeds in the output.
     pub feeds: usize,
@@ -446,28 +446,17 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     write_json(&summary.report, &report)?;
 
     // Written last, so it never points to files that are not there yet.
-    summary.datapackage = crate::datapackage::write_many(
+    summary.stac = crate::stac::write(
         &PACKAGE,
-        &crate::datapackage::ManyFiles {
-            sources: sources
-                .iter()
-                .map(|src| {
-                    let mut s = json!({
-                        "title": src.name.strip_prefix("gtfs/").unwrap_or(&src.name),
-                        "version": crate::date::rfc3339(src.version),
-                    });
-                    if let Some(url) = src.url.as_ref().filter(|u| !u.is_empty()) {
-                        s["path"] = json!(url);
-                    }
-                    s
-                })
-                .collect(),
-            noun: "GTFS feeds",
-            timestamp,
+        timestamp,
+        &[crate::stac::Layer {
+            name: PACKAGE.name,
+            title: PACKAGE.title,
             tiff: &output,
             tiff_hashes: &hashes,
             bom: &summary.bom,
-        },
+            license: &crate::bom::ODBL,
+        }],
     )?;
     summary.output = output;
     eprintln!(
@@ -475,7 +464,7 @@ pub fn run(cfg: &Config) -> Result<Summary> {
         summary.output.display(),
         summary.bom.display(),
         summary.report.display(),
-        summary.datapackage.display(),
+        summary.stac.display(),
         start.elapsed()
     );
     Ok(summary)

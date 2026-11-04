@@ -26,8 +26,8 @@ and its license. The numbers come from the run on the planet of
 ## The files
 
 Each release has two Cloud-Optimized GeoTIFFs, a data bill of
-materials (`.cdx.json`) for each, one `datapackage.json`, and a
-[STAC](running.md#stac-catalog) item and collection:
+materials (`.cdx.json`) for each. One undated
+[STAC](running.md#stac-item) item points to the latest release:
 
 | File | What it holds |
 | --- | --- |
@@ -35,9 +35,7 @@ materials (`.cdx.json`) for each, one `datapackage.json`, and a
 | `osm-node-density.2026-10-19.cdx.json` | The geosignals release that made the raster, the planet it read, and the raster's SHA-256 and SHA-512 |
 | `osm-tagged-node-density.2026-10-19.tiff` | The tagged layer, 332 MB |
 | `osm-tagged-node-density.2026-10-19.cdx.json` | The same for the tagged layer |
-| `datapackage.json` | All of the above as a Frictionless data package, with the license |
-| `osm-node-density.2026-10-19.stac.json` | All of the above as a STAC item, with the license and projection |
-| `collection.json` | The STAC collection, linking to the items of every release in the directory |
+| `osm-node-density.stac.json` | All of the above as a STAC item, with the license and projection; replaced by each release |
 
 The date in each name is the date of the planet's data, taken from the
 replication timestamp in its header. A dated file never changes; the
@@ -289,4 +287,4 @@ The GeoTIFFs are BigTIFF, tiled 256 × 256 and compressed with
 Zstandard. The data BOM names the planet by name, replication
 timestamp and download URL, but has no hash of it, since the planet
 is only partly read. See [Running geosignals](running.md) for the
-container, the data BOM, `datapackage.json` and scratch space.
+container, the data BOM, the STAC item and scratch space.

@@ -122,14 +122,12 @@ fn uploads_release() {
                 .unwrap_or_else(|| panic!("unexpected path {}", r.path))
         })
         .collect();
-    let n = names.len();
-    assert!(n >= 5, "{names:?}");
-    // The files with fixed names go last, after what they point to.
-    assert_eq!(names[n - 2], "datapackage.json");
-    assert_eq!(names[n - 1], "collection.json");
-    assert!(names[n - 3].ends_with(".stac.json"), "{names:?}");
-    assert!(names.iter().any(|f| f.ends_with(".tiff")), "{names:?}");
-    assert!(names.iter().any(|f| f.ends_with(".cdx.json")), "{names:?}");
+    // Two GeoTIFFs and their BOMs, then the undated STAC item last,
+    // after what it points to.
+    assert_eq!(names.len(), 5, "{names:?}");
+    assert_eq!(names[4], "osm-node-density.stac.json");
+    assert_eq!(names.iter().filter(|f| f.ends_with(".tiff")).count(), 2);
+    assert_eq!(names.iter().filter(|f| f.ends_with(".cdx.json")).count(), 2);
 
     for (r, name) in log.iter().zip(&names) {
         assert_eq!(r.body, std::fs::read(out.join(name)).unwrap(), "{name}");
@@ -143,10 +141,9 @@ fn uploads_release() {
             "image/tiff; application=geotiff; profile=cloud-optimized"
         } else if name.ends_with(".cdx.json") {
             "application/vnd.cyclonedx+json"
-        } else if name.ends_with(".stac.json") {
-            "application/geo+json"
         } else {
-            "application/json"
+            assert!(name.ends_with(".stac.json"), "{name}");
+            "application/geo+json"
         };
         assert_eq!(r.headers["content-type"], expected_type, "{name}");
     }

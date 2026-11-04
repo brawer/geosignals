@@ -16,7 +16,8 @@
 //! 3. [`distinct`] counts distinct observers per pixel at every zoom.
 //!
 //! A run writes one GeoTIFF per [`LAYERS`] entry, each with its own
-//! data BOM and license, and one `datapackage.json` for them all.
+//! data BOM and license, and one STAC item for them all; see
+//! [`crate::stac`].
 
 pub mod distinct;
 pub mod snapshot;
@@ -40,7 +41,7 @@ const GRID: Grid = Grid {
     max_zoom: MAX_TILE_ZOOM,
 };
 
-const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
+const PACKAGE: crate::stac::Package = crate::stac::Package {
     name: "naturalist-observers",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#naturalist-observers").
     // Frozen: catalogs key on it, so it keeps the repo's old name.
@@ -198,7 +199,7 @@ pub struct LayerSummary {
 #[derive(Debug, Default)]
 pub struct Summary {
     pub snapshot: String,
-    pub datapackage: PathBuf,
+    pub stac: PathBuf,
     pub layers: Vec<LayerSummary>,
     /// Snapshot files read, and how many of them hold our datasets.
     pub files: usize,
@@ -362,29 +363,16 @@ pub fn run(cfg: &Config) -> Result<Summary> {
     }
 
     // Written last, so it never points to files that are not there yet.
-    let sources = std::iter::once(serde_json::json!({
-        "title": format!("GBIF occurrence snapshot {}", snap.date),
-        "path": snap.url,
-        "version": crate::date::rfc3339(snap.timestamp),
-    }))
-    .chain(DATASETS.iter().map(|d| {
-        serde_json::json!({
-            "title": format!("{}, {}", d.attribution, d.title),
-            "path": format!("https://doi.org/{}", d.doi),
-            "version": crate::date::rfc3339(snap.timestamp),
-        })
-    }))
-    .collect();
     let mut hashes = Vec::new();
     for (_, ls) in &layers {
         hashes.push(bom::hash_file(&ls.output)?);
     }
     let names: Vec<(String, String)> = layers.iter().map(|(l, _)| (l.name(), l.title())).collect();
-    let dp_layers: Vec<crate::datapackage::Layer> = layers
+    let stac_layers: Vec<crate::stac::Layer> = layers
         .iter()
         .zip(&hashes)
         .zip(&names)
-        .map(|(((l, ls), h), (name, title))| crate::datapackage::Layer {
+        .map(|(((l, ls), h), (name, title))| crate::stac::Layer {
             name,
             title,
             tiff: &ls.output,
@@ -393,12 +381,11 @@ pub fn run(cfg: &Config) -> Result<Summary> {
             license: l.license,
         })
         .collect();
-    summary.datapackage =
-        crate::datapackage::write_layers(&PACKAGE, sources, snap.timestamp, &dp_layers)?;
+    summary.stac = crate::stac::write(&PACKAGE, snap.timestamp, &stac_layers)?;
     summary.layers = layers.into_iter().map(|(_, ls)| ls).collect();
     eprintln!(
         "wrote {} in {:.0?}",
-        summary.datapackage.display(),
+        summary.stac.display(),
         start.elapsed()
     );
     Ok(summary)

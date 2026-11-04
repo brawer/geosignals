@@ -373,12 +373,21 @@ fn counts_departures_through_cache() {
             .len(),
         4
     );
-    let pkg: Value = serde_json::from_slice(&std::fs::read(&s.datapackage).unwrap()).unwrap();
-    assert_eq!(pkg["sources"].as_array().unwrap().len(), 4);
+    let item: Value = serde_json::from_slice(&std::fs::read(&s.stac).unwrap()).unwrap();
+    assert_eq!(item["id"], "transit-departures");
     assert_eq!(report["catalogs"][0]["name"], "transitous");
     assert_eq!(report["catalogs"][0]["commit"], COMMIT);
     assert_eq!(report["catalogs"][0]["status"], "changed");
-    assert_eq!(pkg["version"], "2026-06-15");
+    assert_eq!(
+        item["assets"]["transit-departures"]["href"],
+        format!("./{}", s.output.file_name().unwrap().to_str().unwrap())
+    );
+    assert!(
+        item["properties"]["datetime"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-06-15")
+    );
 
     // Second run: the server says nothing changed.
     let s2 = transit::run(&cfg).unwrap();

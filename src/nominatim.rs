@@ -47,7 +47,7 @@ pub const GRID: Grid = Grid {
 /// article, as a tie-breaker; see the README.
 pub const SCALE: f64 = 65536.0;
 
-const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
+const PACKAGE: crate::stac::Package = crate::stac::Package {
     name: "nominatim-secondary-importance",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#nominatim-secondary-importance").
     // Frozen: catalogs key on it, so it keeps the repo's old name.
@@ -85,8 +85,8 @@ pub struct Summary {
     pub output: PathBuf,
     /// Its data bill of materials; see [`crate::bom`].
     pub bom: PathBuf,
-    /// The data package pointing to both; see [`crate::datapackage`].
-    pub datapackage: PathBuf,
+    /// The STAC item pointing to both; see [`crate::stac`].
+    pub stac: PathBuf,
     /// Size and digests of the input.
     pub input_hashes: Option<Hashes>,
     /// PostGIS raster tiles in the input.
@@ -193,21 +193,23 @@ pub fn run<R: Read>(mut input: R, cfg: &Config) -> Result<Summary> {
         &tiff_hashes,
     )?;
     // Written last, so it never points to files that are not there yet.
-    summary.datapackage = crate::datapackage::write(
+    summary.stac = crate::stac::write(
         &PACKAGE,
-        &crate::datapackage::Files {
-            input: &input,
-            timestamp: cfg.timestamp,
+        cfg.timestamp,
+        &[crate::stac::Layer {
+            name: PACKAGE.name,
+            title: PACKAGE.title,
             tiff: &output,
             tiff_hashes: &tiff_hashes,
             bom: &summary.bom,
-        },
+            license: &bom::ODBL,
+        }],
     )?;
     eprintln!(
         "wrote {}, {} and {} in {:.0?}",
         output.display(),
         summary.bom.display(),
-        summary.datapackage.display(),
+        summary.stac.display(),
         start.elapsed()
     );
     Ok(summary)

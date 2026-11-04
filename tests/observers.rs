@@ -295,11 +295,9 @@ fn list(objects: &BTreeMap<String, Vec<u8>>, query: &str) -> String {
 struct Output {
     summary: observers::Summary,
     tiffs: Vec<Vec<u8>>,
-    datapackage: Value,
     boms: Vec<Value>,
-    /// The STAC item and collection.
+    /// The STAC item.
     item: Value,
-    collection: Value,
 }
 
 fn run(bucket: &str, threads: usize, run_size: usize) -> Output {
@@ -325,29 +323,12 @@ fn run(bucket: &str, threads: usize, run_size: usize) -> Output {
         .iter()
         .map(|l| serde_json::from_slice(&std::fs::read(&l.bom).unwrap()).unwrap())
         .collect();
-    let datapackage =
-        serde_json::from_slice(&std::fs::read(&summary.datapackage).unwrap()).unwrap();
-    let json = |name: &str| -> Value {
-        serde_json::from_slice(&std::fs::read(cfg.output_dir.join(name)).unwrap()).unwrap()
-    };
-    let collection = json("collection.json");
-    let item = json(
-        collection["links"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .rfind(|l| l["rel"] == "item")
-            .unwrap()["href"]
-            .as_str()
-            .unwrap(),
-    );
+    let item = serde_json::from_slice(&std::fs::read(&summary.stac).unwrap()).unwrap();
     Output {
         summary,
         tiffs,
-        datapackage,
         boms,
         item,
-        collection,
     }
 }
 
@@ -436,25 +417,19 @@ fn counts_distinct_observers() {
         out.boms[0]["metadata"]["component"]["licenses"][0]["license"]["id"],
         "CC-BY-4.0"
     );
-    let res = out.datapackage["resources"].as_array().unwrap();
-    assert_eq!(res.len(), 6);
-    assert_eq!(res[0]["name"], "ebird-observers-cc-by-4.0");
-    assert_eq!(res[4]["path"], names[2]);
-    assert_eq!(res[4]["licenses"][0]["name"], "CC-BY-NC-4.0");
-    assert_eq!(res[5]["name"], "inaturalist-observers-cc-by-nc-4.0-bom");
-    assert_eq!(out.datapackage["version"], "2026-10-01");
-    assert_eq!(out.datapackage["sources"].as_array().unwrap().len(), 3);
-
-    // The layers differ in license, so the STAC collection says "other"
-    // and each asset states its own.
+    // The layers differ in license, so the STAC item states none and
+    // each asset states its own.
     let item = &out.item;
-    assert_eq!(item["id"], "naturalist-observers-2026-10-01");
+    assert_eq!(item["id"], "naturalist-observers");
+    assert_eq!(item["properties"]["datetime"], "2026-10-01T00:00:00Z");
     assert!(item["properties"].get("license").is_none());
-    assert_eq!(
-        item["assets"]["inaturalist-observers-cc-by-nc-4.0"]["license"],
-        "CC-BY-NC-4.0"
-    );
-    assert_eq!(out.collection["license"], "other");
+    let assets = item["assets"].as_object().unwrap();
+    let keys: Vec<_> = assets.keys().map(String::as_str).collect();
+    assert_eq!(keys.len(), 6);
+    assert_eq!(keys[0], "ebird-observers-cc-by-4.0");
+    assert_eq!(keys[5], "inaturalist-observers-cc-by-nc-4.0-bom");
+    assert_eq!(assets[keys[4]]["href"], format!("./{}", names[2]));
+    assert_eq!(assets[keys[4]]["license"], "CC-BY-NC-4.0");
 
     // The same input gives the same files, whatever the threads and
     // memory limit.

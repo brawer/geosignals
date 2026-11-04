@@ -68,8 +68,7 @@ enum Command {
         /// Directory for the GeoTIFF, which gets named after the date the
         /// input was last modified, such as
         /// nominatim-secondary-importance.2024-05-04.tiff. Use a different
-        /// directory than for other signals, since each writes its own
-        /// datapackage.json.
+        /// directory than for other signals.
         #[arg(long)]
         output_dir: PathBuf,
         /// Working directory for temporary files, about as big as the
@@ -208,14 +207,14 @@ fn limit_malloc_arenas() {
 /// only made a partial or non-public output, as `skip` explains.
 fn publish(
     publisher: Option<&geosignals::publish::Publisher>,
-    datapackage: &std::path::Path,
+    stac: &std::path::Path,
     skip: Option<&str>,
 ) -> Result<()> {
     match (publisher, skip) {
         (None, _) => eprintln!("PUBLIC_S3_URL is not set, so nothing gets uploaded"),
         (Some(_), Some(why)) => eprintln!("not uploading the output of {why}"),
         (Some(p), None) => {
-            p.publish(datapackage)?;
+            p.publish(stac)?;
         }
     }
     Ok(())
@@ -265,7 +264,7 @@ fn main() -> Result<()> {
             let reopen = (source != "-").then_some(&reopen as geosignals::osm_node_density::Reopen);
             let summary = geosignals::osm_node_density::run(input, reopen, &cfg)?;
             eprintln!("{summary:#?}");
-            publish(publisher, &summary.datapackage, skip)?;
+            publish(publisher, &summary.stac, skip)?;
         }
         Command::NominatimSecondaryImportance {
             input,
@@ -285,7 +284,7 @@ fn main() -> Result<()> {
             };
             let summary = geosignals::nominatim::run(reader, &cfg)?;
             eprintln!("{summary:#?}");
-            publish(publisher, &summary.datapackage, None)?;
+            publish(publisher, &summary.stac, None)?;
         }
         Command::NaturalistObservers {
             snapshot,
@@ -311,7 +310,7 @@ fn main() -> Result<()> {
             limit_malloc_arenas();
             let summary = geosignals::observers::run(&cfg)?;
             eprintln!("{summary:#?}");
-            publish(publisher, &summary.datapackage, skip)?;
+            publish(publisher, &summary.stac, skip)?;
         }
         Command::TransitDepartures {
             transitous,
@@ -359,7 +358,7 @@ fn main() -> Result<()> {
             };
             let summary = geosignals::transit::run(&cfg)?;
             eprintln!("{summary:#?}");
-            publish(publisher, &summary.datapackage, skip)?;
+            publish(publisher, &summary.stac, skip)?;
         }
     }
     Ok(())
