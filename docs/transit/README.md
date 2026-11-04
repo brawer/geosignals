@@ -32,17 +32,15 @@ Counts of catalog entries come from the Transitous catalog of
 ## The files
 
 Each release has one Cloud-Optimized GeoTIFF, a data bill of materials
-(`.cdx.json`), a run report (`.report.json`), a `datapackage.json`,
-and a [STAC](../running.md#stac-catalog) item and collection:
+(`.cdx.json`) and a run report (`.report.json`). One undated
+[STAC](../running.md#stac-item) item points to the latest release:
 
 | File | What it holds |
 | --- | --- |
 | `transit-departures.2026-10-26.tiff` | The raster |
 | `transit-departures.2026-10-26.cdx.json` | Every catalog and feed that went in, with its URL, SHA-256, SHA-512, license and attribution |
 | `transit-departures.2026-10-26.report.json` | Each feed's status, weeks counted, departures and duplicates, and the sources that were skipped, with reasons |
-| `datapackage.json` | The GeoTIFF and BOM as a Frictionless data package, with the license |
-| `transit-departures.2026-10-26.stac.json` | The GeoTIFF and BOM as a STAC item, with the license and projection |
-| `collection.json` | The STAC collection, linking to the items of every release in the directory |
+| `transit-departures.stac.json` | The GeoTIFF and BOM as a STAC item, with the license and projection; replaced by each release |
 
 The date in each name is the day of the run. A dated file never
 changes; the next release gets new files. On the three test feeds, the
@@ -414,4 +412,4 @@ should fit on a 2 GB machine. The [technical
 design](TECHNICAL_DESIGN.md#running-the-pipeline) covers the cache,
 memory, scratch disk and the other flags. [Running
 geosignals](../running.md) covers the container, the data BOM and
-`datapackage.json`.
+the STAC item.

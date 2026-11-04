@@ -60,66 +60,48 @@ Each signal writes into `--output-dir`:
   [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/) format. It
   records the geosignals version, the inputs it read, and the SHA-256
   and SHA-512 of the GeoTIFF;
-- `datapackage.json`, a [Frictionless Data Package
-  v2](https://datapackage.org/standard/data-package/) descriptor that
-  points to the dated files by relative path, with their sizes,
-  SHA-256 hashes and licenses. Unlike them, it keeps its name and is
-  replaced by each run, so clients can fetch it to find the current
-  release.
+- one undated [STAC](https://stacspec.org/) item, such as
+  `osm-node-density.stac.json`, that points to the files of the latest
+  release; see [STAC item](#stac-item).
 
-- a [STAC](https://stacspec.org/) item for the release, such as
-  `osm-node-density.2026-10-12.stac.json`, and `collection.json`, the
-  STAC collection of the signal; see [STAC catalog](#stac-catalog).
-
-Give each signal its own output directory, so their `datapackage.json`
-and `collection.json` files don't overwrite each other.
+The dated files never change. The STAC item keeps its name and is
+replaced by each run, so clients fetch it to find the current release.
+Give each signal its own output directory, so that it is easy to tell
+the signals apart.
 
 The same inputs and geosignals release give the same files, except for
 the optional `--run-id` (such as a Kubernetes job name), which is
 recorded in the data BOM as the workflow `uid`.
 
-## STAC catalog
+## STAC item
 
-Each output directory is also a static, self-contained
-[STAC 1.1](https://github.com/radiantearth/stac-spec/tree/v1.1.0)
-catalog, so tools such as QGIS, [pystac](https://pystac.readthedocs.io/)
-and [STAC Browser](https://radiantearth.github.io/stac-browser/) can
-find and load the GeoTIFFs without reading these docs:
+Each signal's undated STAC item, such as `osm-node-density.stac.json`,
+is a standalone [STAC
+1.1](https://github.com/radiantearth/stac-spec/tree/v1.1.0) item, so
+tools such as QGIS, [pystac](https://pystac.readthedocs.io/) and [STAC
+Browser](https://radiantearth.github.io/stac-browser/) can find and load
+the latest GeoTIFFs without reading these docs. It has the signal's
+title, description, license and bounding box, and the date of the
+input data as `datetime`. Its assets are the release's GeoTIFFs (role
+`data`) and data BOMs (role `metadata`), with size and SHA-256 ([file
+extension](https://github.com/stac-extensions/file)), and for the
+GeoTIFFs the EPSG code, shape and transform of the full-resolution
+image ([projection
+extension](https://github.com/stac-extensions/projection)) and the
+band's data type and nodata value.
 
-- `collection.json` is the STAC collection of the signal, such as
-  `osm-node-density`. It has the signal's title, description, license,
-  and spatial and temporal extent, links to one item per release, and
-  lists `datapackage.json` as an asset. Like `datapackage.json`, it
-  keeps its name and is rewritten by each run.
-- Each release gets a dated STAC item, such as
-  `osm-node-density.2026-10-12.stac.json`. Its assets are the
-  release's GeoTIFFs (role `data`) and data BOMs (role `metadata`),
-  with size and SHA-256 ([file
-  extension](https://github.com/stac-extensions/file)), and for the
-  GeoTIFFs the EPSG code, shape and transform of the full-resolution
-  image ([projection
-  extension](https://github.com/stac-extensions/projection)) and the
-  band's data type and nodata value. Like the files it lists, the item
-  never changes.
-
-The collection links to every item it finds in the directory, so
-releases you keep stay in the catalog. To drop a release, delete its
-files including the `.stac.json`; the next run leaves it out. All links
-are relative, so the directory can be copied or served from anywhere.
-For example, with pystac:
+The asset links are relative, so the directory can be copied or served
+from anywhere. For example, with pystac:
 
 ```python
 import pystac
-collection = pystac.read_file("https://example.org/osm-node-density/collection.json")
-item = max(collection.get_items(), key=lambda i: i.datetime)
-print(item.assets["osm-node-density"].get_absolute_href())
+item = pystac.Item.from_file("https://example.org/osm-node-density/osm-node-density.stac.json")
+print(item.datetime, item.assets["osm-node-density"].get_absolute_href())
 ```
 
-The STAC files hold what `datapackage.json` holds, in another
-vocabulary. STAC has no place for license evidence and per-source
-attribution, so the data BOM stays the authority on sources and
-licenses. The smoke test checks the STAC files with pystac against the
-STAC schemas.
+STAC has no place for license evidence and per-source attribution, so
+the data BOM stays the authority on sources and licenses. The smoke
+test checks the STAC items with pystac against the STAC schemas.
 
 ## Publishing to Source Cooperative
 
@@ -145,9 +127,9 @@ the cache and the public storage can live with different providers.
   stops before computing anything, rather than failing after hours.
 - Each signal goes into a folder named after it, such as
   `s3://brawer/geosignals/osm-node-density/`, holding the same files
-  as its output directory. The dated files (GeoTIFFs, data BOMs, STAC
-  item) are uploaded first, and `datapackage.json` and `collection.json`
-  last, so readers never find a link to a file that isn't there yet.
+  as its output directory. The dated GeoTIFFs and data BOMs are
+  uploaded first, and the undated STAC item last, so readers never find
+  a link to a file that isn't there yet.
   Each object gets its media type, such as
   `image/tiff; application=geotiff; profile=cloud-optimized`.
 - Partial or restricted outputs are never uploaded: runs with
@@ -158,10 +140,6 @@ the cache and the public storage can live with different providers.
   network error repeats one part rather than the whole file. If the
   upload fails anyway, geosignals aborts it, so the bucket doesn't keep
   the parts. The transit cache uploads large files the same way.
-
-`collection.json` lists the releases whose STAC items are in the local
-output directory. To keep older releases in the public catalog, keep
-the output directory between runs.
 
 ## Scratch space and memory
 

@@ -22,16 +22,14 @@ is still the current one on 28 October 2026.
 ## The files
 
 Each release has one Cloud-Optimized GeoTIFF, a data bill of materials
-(`.cdx.json`), a `datapackage.json`, and a
-[STAC](running.md#stac-catalog) item and collection:
+(`.cdx.json`). One undated [STAC](running.md#stac-item) item points to
+the latest release:
 
 | File | What it holds |
 | --- | --- |
 | `nominatim-secondary-importance.2024-05-04.tiff` | The raster (9 MB) |
 | `nominatim-secondary-importance.2024-05-04.cdx.json` | The input's URL, date, SHA-256 and SHA-512, and the hashes of the GeoTIFF |
-| `datapackage.json` | The above as a Frictionless data package, with the license |
-| `nominatim-secondary-importance.2024-05-04.stac.json` | The above as a STAC item, with the license and projection |
-| `collection.json` | The STAC collection, linking to the items of every release in the directory |
+| `nominatim-secondary-importance.stac.json` | The above as a STAC item, with the license and projection; replaced by each release |
 
 The date in each name is the `Last-Modified` date of Nominatim's file,
 not the day of our run. As long as Nominatim does not publish a new
@@ -378,4 +376,4 @@ seconds. `--input` reads a local copy instead; the output is then
 named after the file's modification time. Since the input is read
 whole, the data BOM also records its SHA-256 and SHA-512. See
 [Running geosignals](running.md) for the container, the data BOM,
-`datapackage.json` and scratch space.
+the STAC item and scratch space.

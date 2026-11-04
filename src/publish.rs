@@ -13,15 +13,14 @@
 //! before it starts, rather than computing for hours and then finding
 //! it can't publish.
 //!
-//! Each signal goes to its own folder named after its package, such as
+//! Each signal goes to its own folder named after it, such as
 //! `s3://bucket/prefix/osm-node-density/`, mirroring its output
-//! directory. The dated files go first and the files with fixed names,
-//! `datapackage.json` and `collection.json`, go last, so a client that
-//! fetches them never finds a link to a file that is not there yet.
+//! directory. The dated GeoTIFFs and data BOMs go first, and the
+//! undated STAC item that points to them goes last, so a client that
+//! fetches it never finds a link to a file that is not there yet.
 
 use crate::store::{S3, parse_s3_url};
 use anyhow::{Context, Result, ensure};
-use serde_json::Value;
 use std::path::Path;
 
 const ENV_PREFIX: &str = "PUBLIC_S3_";
@@ -47,18 +46,22 @@ impl Publisher {
         Ok(Some(Publisher { s3 }))
     }
 
-    /// Uploads the release that `datapackage` (a `datapackage.json`)
-    /// describes: its resources, its STAC item, the descriptor itself
-    /// and the STAC collection. Returns where they went.
-    pub fn publish(&self, datapackage: &Path) -> Result<Vec<String>> {
-        let dir = datapackage.parent().unwrap_or(Path::new("."));
-        let dp: Value = serde_json::from_slice(
-            &std::fs::read(datapackage)
-                .with_context(|| format!("reading {}", datapackage.display()))?,
-        )
-        .with_context(|| format!("parsing {}", datapackage.display()))?;
-        let files = files(&dp)?;
-        let name = dp["name"].as_str().unwrap_or_default();
+    /// Uploads the release that the STAC item at `item`, such as
+    /// `osm-node-density.stac.json`, describes: the files it points to,
+    /// then the item itself. Returns where they went.
+    pub fn publish(&self, item: &Path) -> Result<Vec<String>> {
+        let dir = item.parent().unwrap_or(Path::new("."));
+        let item_name = item
+            .file_name()
+            .context("STAC item has no file name")?
+            .to_string_lossy()
+            .into_owned();
+        let name = item_name
+            .strip_suffix(".stac.json")
+            .with_context(|| format!("{item_name} is no STAC item"))?;
+        ensure!(is_file_name(name), "bad signal name {name:?}");
+        let mut files = crate::stac::asset_files(item)?;
+        files.push((item_name.clone(), crate::stac::ITEM_MEDIA_TYPE.into()));
         let start = std::time::Instant::now();
         let mut uploaded = Vec::new();
         for (file, media_type) in &files {
@@ -79,80 +82,7 @@ impl Publisher {
     }
 }
 
-/// The files of the release described by `dp`, in upload order, with
-/// their media types.
-fn files(dp: &Value) -> Result<Vec<(String, String)>> {
-    let name = dp["name"].as_str().context("datapackage has no name")?;
-    let version = dp["version"]
-        .as_str()
-        .context("datapackage has no version")?;
-    ensure!(is_file_name(name), "bad package name {name:?}");
-    let mut files = Vec::new();
-    for r in dp["resources"].as_array().into_iter().flatten() {
-        let path = r["path"].as_str().context("resource without path")?;
-        ensure!(
-            is_file_name(path),
-            "resource path {path:?} is not a file name"
-        );
-        let media_type = r["mediatype"]
-            .as_str()
-            .unwrap_or("application/octet-stream");
-        files.push((path.to_string(), media_type.to_string()));
-    }
-    let item = crate::stac::item_file_name(name, version);
-    ensure!(is_file_name(&item), "bad STAC item name {item:?}");
-    files.push((item, "application/geo+json".into()));
-    files.push((
-        crate::datapackage::FILE_NAME.into(),
-        "application/json".into(),
-    ));
-    files.push((
-        crate::stac::COLLECTION_FILE_NAME.into(),
-        "application/json".into(),
-    ));
-    Ok(files)
-}
-
 /// True for a plain file name in the same directory.
 fn is_file_name(s: &str) -> bool {
     !s.is_empty() && s != "." && s != ".." && !s.contains(['/', '\\'])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn lists_dated_files_first() {
-        let dp = json!({
-            "name": "osm-node-density",
-            "version": "2026-10-12",
-            "resources": [
-                {"path": "osm-node-density.2026-10-12.tiff", "mediatype": "image/tiff"},
-                {"path": "osm-node-density.2026-10-12.cdx.json", "mediatype": "application/vnd.cyclonedx+json"},
-            ],
-        });
-        let names: Vec<String> = files(&dp).unwrap().into_iter().map(|(f, _)| f).collect();
-        assert_eq!(
-            names,
-            [
-                "osm-node-density.2026-10-12.tiff",
-                "osm-node-density.2026-10-12.cdx.json",
-                "osm-node-density.2026-10-12.stac.json",
-                "datapackage.json",
-                "collection.json",
-            ]
-        );
-    }
-
-    #[test]
-    fn rejects_paths_outside_the_directory() {
-        let dp = json!({
-            "name": "x",
-            "version": "2026-10-12",
-            "resources": [{"path": "../secret"}],
-        });
-        assert!(files(&dp).is_err());
-    }
 }

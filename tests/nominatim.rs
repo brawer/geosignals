@@ -157,15 +157,22 @@ fn republishes_raster() {
             .starts_with("pkg:generic/nominatim/wikimedia-secondary-importance.sql.gz@")
     );
 
-    let pkg: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&summary.datapackage).unwrap()).unwrap();
-    assert_eq!(pkg["name"], "nominatim-secondary-importance");
-    assert_eq!(pkg["version"], "2024-05-04");
-    assert_eq!(pkg["sources"][0]["path"], nominatim::URL);
     assert_eq!(
-        pkg["resources"][0]["path"],
-        "nominatim-secondary-importance.2024-05-04.tiff"
+        summary.stac,
+        summary
+            .output
+            .with_file_name("nominatim-secondary-importance.stac.json")
     );
+    let item: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&summary.stac).unwrap()).unwrap();
+    assert_eq!(item["id"], "nominatim-secondary-importance");
+    assert_eq!(item["properties"]["datetime"], "2024-05-04T08:42:14Z");
+    let asset = &item["assets"]["nominatim-secondary-importance"];
+    assert_eq!(
+        asset["href"],
+        "./nominatim-secondary-importance.2024-05-04.tiff"
+    );
+    assert_eq!(asset["bands"][0]["nodata"], 0);
 
     // Running again gives the same files.
     let again = nominatim::run(gz.as_slice(), &cfg).unwrap();

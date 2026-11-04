@@ -20,11 +20,10 @@ snapshot of 1 October 2026.
 ## The files
 
 Each release has three Cloud-Optimized GeoTIFFs, each with a data bill
-of materials (`.cdx.json`), one `datapackage.json` that lists them
-with their licenses, and the same as a [STAC](running.md#stac-catalog)
-item, `naturalist-observers.2026-10-01.stac.json`, in the collection
-`collection.json`. Since the files differ in license, the collection's
-license is `other`, and each asset in the item states its own:
+of materials (`.cdx.json`). One undated [STAC](running.md#stac-item)
+item, `naturalist-observers.stac.json`, lists the latest release's
+files with their licenses. Since the files differ in license, the item
+states no license of its own, and each asset states its own:
 
 | File | Input records | License | Records used | Observers | Size |
 | --- | --- | --- | ---: | ---: | ---: |
@@ -254,7 +253,7 @@ records, are never used. GBIF does not take them from iNaturalist in
 the first place.
 
 GBIF asks that each dataset be cited by its DOI. Each file's
-`Copyright` tag, data BOM and `datapackage.json` give the attribution
+`Copyright` tag and data BOM give the attribution
 to use:
 
 - *Cornell Lab of Ornithology and eBird contributors, EOD – eBird
@@ -276,7 +275,7 @@ cargo run --release -- naturalist-observers --output-dir observers
 `--snapshot 2026-10-01` reads a given snapshot instead of the latest,
 and `--bucket` reads from one of GBIF's mirrors in other AWS regions.
 See [Running geosignals](running.md) for the container, the data BOMs,
-`datapackage.json` and scratch space.
+the STAC item and scratch space.
 
 **Threads.** Most of the time goes to waiting for S3, so `--threads`
 can well exceed the number of CPUs. Each thread fetches columns one

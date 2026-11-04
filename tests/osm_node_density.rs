@@ -14,10 +14,8 @@ struct Output {
     summary: osm_node_density::Summary,
     image: common::Image,
     bom: serde_json::Value,
-    datapackage: serde_json::Value,
-    /// The STAC item and collection.
+    /// The STAC item.
     item: serde_json::Value,
-    collection: serde_json::Value,
     sha256: String,
     bom_bytes: usize,
     /// The decoded image of nodes with tags, and its SHA-256.
@@ -54,30 +52,12 @@ fn run(pbf: &Path, run_size: usize) -> Output {
     let tagged_tiff = std::fs::read(&summary.tagged.tiff).unwrap();
     let bom_json = std::fs::read(&summary.bom).unwrap();
     let bom = serde_json::from_slice(&bom_json).unwrap();
-    let datapackage =
-        serde_json::from_slice(&std::fs::read(&summary.datapackage).unwrap()).unwrap();
-    let json = |name: &str| -> serde_json::Value {
-        serde_json::from_slice(&std::fs::read(dir.path().join(name)).unwrap()).unwrap()
-    };
-    // Whatever the input's date, its item is the latest one.
-    let collection = json("collection.json");
-    let item = json(
-        collection["links"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .rfind(|l| l["rel"] == "item")
-            .unwrap()["href"]
-            .as_str()
-            .unwrap(),
-    );
+    let item = serde_json::from_slice(&std::fs::read(&summary.stac).unwrap()).unwrap();
     Output {
         summary,
         image,
         bom,
-        datapackage,
         item,
-        collection,
         sha256: sha256(&tiff),
         bom_bytes: bom_json.len(),
         tagged_image: common::read(&tagged_tiff),
@@ -110,11 +90,9 @@ fn zugerland() {
         summary,
         image,
         bom,
-        datapackage,
         sha256,
         bom_bytes,
         item,
-        collection,
         ..
     } = run(Path::new(ZUGERLAND), 1000);
     assert_eq!(summary.nodes, 1790);
@@ -146,34 +124,24 @@ fn zugerland() {
     );
     assert_eq!(bom["formulation"][0]["workflows"][0]["uid"], "test-run");
 
-    // The data package points to both files, by name relative to itself.
+    // The undated STAC item points to the dated files, by name
+    // relative to itself.
     assert_eq!(
-        summary.datapackage,
-        summary.output.with_file_name("datapackage.json")
+        summary.stac,
+        summary.output.with_file_name("osm-node-density.stac.json")
     );
-    assert_eq!(datapackage["version"], "2026-01-27");
-    let resources = datapackage["resources"].as_array().unwrap();
-    assert_eq!(resources[0]["path"], "osm-node-density.2026-01-27.tiff");
-    assert_eq!(resources[0]["hash"], format!("sha256:{sha256}"));
-    assert_eq!(resources[1]["path"], "osm-node-density.2026-01-27.cdx.json");
-    assert_eq!(resources[1]["bytes"], bom_bytes, "BOM size");
-
-    // The STAC item lists the same files, and the collection links to it.
+    assert_eq!(item["id"], "osm-node-density");
+    assert_eq!(item["properties"]["datetime"], "2026-01-27T08:11:02Z");
+    assert_eq!(item["properties"]["license"], "ODbL-1.0");
     let tiff = &item["assets"]["osm-node-density"];
     assert_eq!(tiff["href"], "./osm-node-density.2026-01-27.tiff");
     assert_eq!(tiff["file:checksum"], format!("1220{sha256}"));
     assert_eq!(tiff["proj:code"], "EPSG:3857");
     assert_eq!(tiff["proj:shape"], serde_json::json!([1 << 18, 1 << 18]));
+    let bom = &item["assets"]["osm-node-density-bom"];
+    assert_eq!(bom["href"], "./osm-node-density.2026-01-27.cdx.json");
+    assert_eq!(bom["file:size"], bom_bytes, "BOM size");
     assert!(item["assets"]["osm-tagged-node-density-bom"].is_object());
-    assert_eq!(collection["id"], "osm-node-density");
-    assert_eq!(collection["license"], "ODbL-1.0");
-    assert!(
-        collection["links"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|l| l["rel"] == "item" && l["href"] == "./osm-node-density.2026-01-27.stac.json")
-    );
 
     assert_eq!(image.ifds.len(), 11, "full resolution plus 10 overviews");
     let full = &image.ifds[0];
@@ -281,12 +249,9 @@ fn tagged_layer() {
         .sum();
     assert!((n / TAGGED_NODES as f64 - 1.0).abs() < 0.06, "{n:.0} nodes");
 
-    // One data package lists both layers, each with its BOM.
-    let resources = out.datapackage["resources"].as_array().unwrap();
-    let names: Vec<_> = resources
-        .iter()
-        .map(|r| r["name"].as_str().unwrap())
-        .collect();
+    // One STAC item lists both layers, each with its BOM.
+    let assets = out.item["assets"].as_object().unwrap();
+    let names: Vec<_> = assets.keys().map(String::as_str).collect();
     assert_eq!(
         names,
         [
@@ -297,10 +262,10 @@ fn tagged_layer() {
         ]
     );
     assert_eq!(
-        resources[2]["hash"],
-        format!("sha256:{}", out.tagged_sha256)
+        assets["osm-tagged-node-density"]["file:checksum"],
+        format!("1220{}", out.tagged_sha256)
     );
-    assert_eq!(out.datapackage["licenses"][0]["name"], "ODbL-1.0");
+    assert_eq!(out.item["properties"]["license"], "ODbL-1.0");
 }
 
 #[test]
@@ -314,7 +279,7 @@ fn run_size_does_not_change_output() {
     assert_eq!(a.tagged_image.tiles, b.tagged_image.tiles);
     assert_eq!(a.tagged_sha256, b.tagged_sha256);
     assert_eq!(a.bom, b.bom, "data BOM is reproducible");
-    assert_eq!(a.datapackage, b.datapackage, "data package is reproducible");
+    assert_eq!(a.item, b.item, "STAC item is reproducible");
 }
 
 /// Kubernetes may restart a killed run with the same working directory.

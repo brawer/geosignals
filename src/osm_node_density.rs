@@ -14,7 +14,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-const PACKAGE: crate::datapackage::Package = crate::datapackage::Package {
+const PACKAGE: crate::stac::Package = crate::stac::Package {
     name: "osm-node-density",
     // UUIDv5(URL, "https://github.com/brawer/osmsignals#osm-node-density").
     // Frozen: catalogs key on it, so it keeps the repo's old name.
@@ -56,9 +56,9 @@ pub struct Summary {
     pub output: PathBuf,
     /// Its data bill of materials; see [`crate::bom`].
     pub bom: PathBuf,
-    /// The data package pointing to both layers and their BOMs; see
-    /// [`crate::datapackage`].
-    pub datapackage: PathBuf,
+    /// The STAC item pointing to both layers and their BOMs; see
+    /// [`crate::stac`].
+    pub stac: PathBuf,
     pub nodes: u64,
     pub skipped_nodes: u64,
     pub pixels: u64,
@@ -74,7 +74,7 @@ pub struct Summary {
 
 /// One of the GeoTIFFs a run writes.
 struct Layer {
-    /// File name prefix and data package resource name.
+    /// File name prefix and STAC asset key.
     name: &'static str,
     title: &'static str,
     /// Band description, shown by GDAL and QGIS.
@@ -166,20 +166,16 @@ pub fn run<R: Read + Send>(input: R, reopen: Option<Reopen>, cfg: &Config) -> Re
     )?;
 
     // Written last, so it never points to files that are not there yet.
-    let datapackage = crate::datapackage::write_layers(
+    let stac = crate::stac::write(
         &PACKAGE,
-        vec![crate::datapackage::input_source(
-            &cfg.input,
-            stats.timestamp,
-        )],
         stats.timestamp,
-        &[dp_layer(&ALL, &all), dp_layer(&TAGGED, &tagged)],
+        &[stac_layer(&ALL, &all), stac_layer(&TAGGED, &tagged)],
     )?;
-    eprintln!("wrote {} in {:.0?}", datapackage.display(), start.elapsed());
+    eprintln!("wrote {} in {:.0?}", stac.display(), start.elapsed());
     Ok(Summary {
         output: all.tiff,
         bom: all.bom,
-        datapackage,
+        stac,
         nodes: stats.nodes,
         skipped_nodes: stats.skipped,
         pixels: all.pixels,
@@ -190,8 +186,8 @@ pub fn run<R: Read + Send>(input: R, reopen: Option<Reopen>, cfg: &Config) -> Re
     })
 }
 
-fn dp_layer<'a>(l: &'a Layer, o: &'a Output) -> crate::datapackage::Layer<'a> {
-    crate::datapackage::Layer {
+fn stac_layer<'a>(l: &'a Layer, o: &'a Output) -> crate::stac::Layer<'a> {
+    crate::stac::Layer {
         name: l.name,
         title: l.title,
         tiff: &o.tiff,
