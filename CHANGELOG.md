@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/brawer/geosignals/compare/v0.4.0...v0.5.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* datapackage.json, collection.json and the dated .stac.json files are no longer written or uploaded. Clients read <signal>.stac.json instead.
+
+### 🆕 Enhancements
+
+* delete old releases from public storage ([cc8e7c7](https://github.com/brawer/geosignals/commit/cc8e7c7f6a76418a087f486cc6663fb63a3019b5))
+* drop Frictionless datapackage.json; one undated STAC item per signal ([0528d8d](https://github.com/brawer/geosignals/commit/0528d8deaae9d21ddbd0392295502964395a0d3e))
+
 ## [0.4.0](https://github.com/brawer/geosignals/compare/v0.3.1...v0.4.0) (2026-11-01)
 
 
