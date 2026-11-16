@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/brawer/geosignals/compare/v0.4.0...v0.5.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* datapackage.json, collection.json and the dated .stac.json files are no longer written or uploaded. Clients read <signal>.stac.json instead.
+
+### 🆕 Enhancements
+
+* delete old releases from public storage ([cc8e7c7](https://github.com/brawer/geosignals/commit/cc8e7c7f6a76418a087f486cc6663fb63a3019b5))
+* drop Frictionless datapackage.json; one undated STAC item per signal ([0528d8d](https://github.com/brawer/geosignals/commit/0528d8deaae9d21ddbd0392295502964395a0d3e))
+
+
+### 🚧 Maintenance
+
+* **ci:** Bump amannn/action-semantic-pull-request from 6.1.1 to 6.1.2 ([daa6aa9](https://github.com/brawer/geosignals/commit/daa6aa95a84a9d2f1125d7e31c3ef79197f9715b))
+* **ci:** Bump docker/login-action from 4.7.0 to 4.8.0 ([d910c39](https://github.com/brawer/geosignals/commit/d910c39366684c073c030ed020ee77e24efad696))
+
 ## [0.4.0](https://github.com/brawer/geosignals/compare/v0.3.1...v0.4.0) (2026-11-01)
 
 
