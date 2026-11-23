@@ -53,9 +53,9 @@ impl<F: FnMut(u8, u32, u32, &Counts) -> Result<()>> Builder<F> {
 
         // Find the deepest level whose tile is an ancestor of (tx, ty).
         let mut keep = 0usize;
-        for z in 0..=MAX_TILE_ZOOM as usize {
+        for (z, level) in self.levels.iter().enumerate() {
             let shift = MAX_TILE_ZOOM as usize - z;
-            match &self.levels[z] {
+            match level {
                 Some(l) if l.x == tx >> shift && l.y == ty >> shift => keep = z + 1,
                 _ => break,
             }
