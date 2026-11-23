@@ -19,7 +19,7 @@ fast_hilbert = "2.1.0"
 flate2 = "1.1.10"
 memmap2 = "0.9.12"
 osmpbf = "0.3.8"
-parquet = { version = "60.0.0", default-features = false, features = ["snap"] }
+parquet = { version = "60.2.0", default-features = false, features = ["snap"] }
 ring = "0.17.14"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 tar = { version = "0.4.46", default-features = false }
