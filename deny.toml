@@ -12,7 +12,17 @@ all-features = true
 # ── advisories: RUSTSEC/OSV vulnerabilities, unmaintained/yanked crates ─────
 [advisories]
 yanked = "deny"
-ignore = []
+# Spelled out so local runs match CI, whatever cargo-deny version.
+unmaintained = "all"
+ignore = [
+  # chrono is unmaintained (no vulnerability). We don't use it directly;
+  # parquet requires it unconditionally, even in 60.2.0 (the newest
+  # release as of 2026-11-23), only to format DATE/TIMESTAMP values in
+  # its record API, which geosignals never calls. Upstream tracks the
+  # move to jiff in apache/arrow-rs#9183 and #12343. Drop this entry
+  # once a parquet release no longer depends on chrono.
+  { id = "RUSTSEC-2026-0543", reason = "unmaintained chrono, required by parquet; no fixed release yet" },
+]
 
 # ── licenses: only accept licenses we've reviewed as OK to redistribute ─────
 [licenses]
