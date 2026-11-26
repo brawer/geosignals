@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.5.0](https://github.com/brawer/geosignals/compare/v0.4.0...v0.5.0) (2026-11-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* datapackage.json, collection.json and the dated .stac.json files are no longer written or uploaded. Clients read <signal>.stac.json instead.
+
+### 🆕 Enhancements
+
+* delete old releases from public storage ([cc8e7c7](https://github.com/brawer/geosignals/commit/cc8e7c7f6a76418a087f486cc6663fb63a3019b5))
+* drop Frictionless datapackage.json; one undated STAC item per signal ([0528d8d](https://github.com/brawer/geosignals/commit/0528d8deaae9d21ddbd0392295502964395a0d3e))
+
+
+### 🐞 Bug Fixes
+
+* **deps:** bump parquet to 60.2.0 and allow unmaintained chrono ([a414db0](https://github.com/brawer/geosignals/commit/a414db00dc3a7215ff0d5d23d2fa4412d4c18384))
+
+
+### 🚧 Maintenance
+
+* **ci:** Bump actions/create-github-app-token from 3.3.0 to 3.4.0 ([6a1c4b2](https://github.com/brawer/geosignals/commit/6a1c4b2c0d7e09f4427a6ec59afcdfaf5261077d))
+* **ci:** Bump amannn/action-semantic-pull-request from 6.1.1 to 6.1.2 ([daa6aa9](https://github.com/brawer/geosignals/commit/daa6aa95a84a9d2f1125d7e31c3ef79197f9715b))
+* **ci:** Bump amannn/action-semantic-pull-request from 6.1.2 to 6.1.3 ([04d6de3](https://github.com/brawer/geosignals/commit/04d6de310b24fabffe819ae6f2d16b9a1d0eecbf))
+* **ci:** Bump docker/login-action from 4.7.0 to 4.8.0 ([d910c39](https://github.com/brawer/geosignals/commit/d910c39366684c073c030ed020ee77e24efad696))
+* **ci:** Bump EmbarkStudios/cargo-deny-action from 2.1.1 to 2.1.3 ([8899d9f](https://github.com/brawer/geosignals/commit/8899d9fc01a7a672f7f090115e591b3d43d92fa2))
+* iterate pyramid levels directly to satisfy clippy 1.100 ([3b782e0](https://github.com/brawer/geosignals/commit/3b782e076b1122f722b1a819e65bdea5c0247ed5))
+
 ## [0.4.0](https://github.com/brawer/geosignals/compare/v0.3.1...v0.4.0) (2026-11-01)
 
 
